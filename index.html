@@ -31,7 +31,7 @@ const {useState,useEffect,useCallback,useMemo} = React;
 const GIST_ID    = "d8a024c319d8ec7061ce6d7d94b5f3f4";
 const GIST_TOKEN = "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";
 const GIST_FILE  = "featuretrack-db.json";
-const ANTH_KEY   = ""; // Optional: paste your Anthropic API key for AI Insights
+const ANTH_KEY = ""; // Optional: paste your Anthropic API key for AI Insights
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GITHUB GIST — shared database
@@ -159,8 +159,65 @@ const parseXLSX = buf => {
 parseXLSX.remap = (rawRows, headers, colMap) => rawRows.map(r => mapRow(r, colMap, headers));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ICONS
+// SETUP SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
+const SetupScreen = ({ onDone }) => {
+  const [token, setToken] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSave = async () => {
+    if (!token.trim()) return;
+    setTesting(true); setError("");
+    try {
+      saveToken(token.trim());
+      const data = await loadData();
+      onDone(data);
+    } catch(e) {
+      setError("Could not connect to Gist. Check your token has 'gist' scope and try again.");
+      saveToken("");
+    }
+    setTesting(false);
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#f9fafb",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{background:"#fff",borderRadius:16,border:"1px solid #e5e7eb",padding:40,maxWidth:480,width:"100%",boxShadow:"0 4px 24px rgba(0,0,0,0.06)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:24}}>
+          <div style={{width:32,height:32,background:"#4f46e5",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <SVG d={IC.zap} size={18} color="#fff"/>
+          </div>
+          <span style={{fontSize:20,fontWeight:700,color:"#111827"}}>FeatureTrack</span>
+        </div>
+        <h2 style={{fontSize:16,fontWeight:700,color:"#111827",marginBottom:6}}>Enter your GitHub Token</h2>
+        <p style={{fontSize:13,color:"#6b7280",marginBottom:20,lineHeight:1.6}}>
+          A GitHub Personal Access Token is needed to read and write the shared database.
+          This is stored only in your browser — never in the source code.
+        </p>
+        <div style={{background:"#f8fafc",borderRadius:10,padding:16,marginBottom:20,fontSize:12,color:"#475569",lineHeight:1.7}}>
+          <strong>To create a token:</strong><br/>
+          1. Go to <strong>github.com → Settings → Developer Settings</strong><br/>
+          2. Click <strong>Personal Access Tokens → Tokens (classic)</strong><br/>
+          3. Click <strong>Generate new token (classic)</strong><br/>
+          4. Check only the <strong>gist</strong> scope<br/>
+          5. Copy and paste below
+        </div>
+        <input
+          value={token}
+          onChange={e => setToken(e.target.value)}
+          placeholder="ghp_..."
+          style={{...InputStyle, marginBottom:12, fontFamily:"monospace", fontSize:12}}
+        />
+        {error && <p style={{fontSize:12,color:"#dc2626",marginBottom:12}}>{error}</p>}
+        <Btn onClick={handleSave} disabled={!token.trim()||testing}
+          style={{width:"100%",padding:"11px 0",background:token.trim()&&!testing?"#4f46e5":"#f3f4f6",
+            color:token.trim()&&!testing?"#fff":"#9ca3af",cursor:token.trim()&&!testing?"pointer":"not-allowed"}}>
+          {testing ? "Connecting…" : "Connect & Launch"}
+        </Btn>
+      </div>
+    </div>
+  );
+};
 const SVG = ({ d, size = 16, color = "currentColor", style = {} }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
     stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style}>
@@ -729,11 +786,154 @@ const SubmitForm = ({ onSubmit, onDone, lists }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EDIT MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+const EditModal = ({ request, lists, onSave, onClose }) => {
+  const [f, setF] = useState({ ...request });
+  const [tag, setTag] = useState("");
+  const set = (k,v) => setF(p => ({...p,[k]:v}));
+  const addTag = () => { const t=tag.trim(); if(t&&!f.tags.includes(t)) set("tags",[...f.tags,t]); setTag(""); };
+  const valid = f.title && f.submittedBy && f.product && f.description && (!f.isClient||f.client);
+
+  const DL = ({id,items}) => <datalist id={id}>{items.map(v=><option key={v} value={v}/>)}</datalist>;
+
+  return (
+    <div onClick={onClose}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:50,
+        display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{background:"#fff",borderRadius:16,width:"100%",maxWidth:560,
+          maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"18px 24px",borderBottom:"1px solid #f3f4f6",
+          display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <h2 style={{fontSize:16,fontWeight:700,color:"#111827"}}>Edit Request</h2>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#9ca3af"}}>
+            <SVG d={IC.x} size={18}/>
+          </button>
+        </div>
+        <div style={{padding:24,display:"flex",flexDirection:"column",gap:16}}>
+
+          <div>
+            <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Submitted By *</label>
+            <input list="e-tm" value={f.submittedBy} onChange={e=>set("submittedBy",e.target.value)} style={InputStyle}/>
+            <DL id="e-tm" items={lists.teamMembers}/>
+          </div>
+
+          <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",userSelect:"none"}}>
+            <div onClick={()=>set("isClient",!f.isClient)}
+              style={{width:40,height:24,borderRadius:999,padding:"0 4px",
+                background:f.isClient?"#4f46e5":"#d1d5db",display:"flex",alignItems:"center",transition:"background 0.2s"}}>
+              <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",
+                boxShadow:"0 1px 3px rgba(0,0,0,0.2)",transform:f.isClient?"translateX(16px)":"none",transition:"transform 0.2s"}}/>
+            </div>
+            <span style={{fontSize:13,fontWeight:500,color:"#374151"}}>On behalf of a client</span>
+          </label>
+
+          {f.isClient && (
+            <div>
+              <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Client Name *</label>
+              <input value={f.client} onChange={e=>set("client",e.target.value)} placeholder="e.g. Acme Corp" style={InputStyle}/>
+            </div>
+          )}
+
+          <div>
+            <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Request Title *</label>
+            <input value={f.title} onChange={e=>set("title",e.target.value)} style={InputStyle}/>
+          </div>
+
+          <div>
+            <SectionLabel>Classifications</SectionLabel>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Product *</label>
+                <input list="e-pl" value={f.product} onChange={e=>set("product",e.target.value)} style={InputStyle}/>
+                <DL id="e-pl" items={lists.products}/>
+              </div>
+              <div>
+                <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Product Subset</label>
+                <input list="e-sl" value={f.productSubset} onChange={e=>set("productSubset",e.target.value)} style={InputStyle}/>
+                <DL id="e-sl" items={lists.productSubsets}/>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div>
+                <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Product Area</label>
+                <input list="e-al" value={f.productArea} onChange={e=>set("productArea",e.target.value)} style={InputStyle}/>
+                <DL id="e-al" items={lists.productAreas}/>
+              </div>
+              <div>
+                <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>EBC / Events / Reference</label>
+                <input list="e-el" value={f.ebcType} onChange={e=>set("ebcType",e.target.value)} style={InputStyle}/>
+                <DL id="e-el" items={lists.ebcTypes}/>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Priority</label>
+            <div style={{display:"flex",gap:8}}>
+              {["Low","Medium","High"].map(p=>(
+                <button key={p} onClick={()=>set("priority",p)}
+                  style={{padding:"6px 18px",borderRadius:8,fontSize:13,fontWeight:500,
+                    border:`1px solid ${f.priority===p?PRI[p].border:"#e5e7eb"}`,
+                    background:f.priority===p?PRI[p].bg:"#fff",
+                    color:f.priority===p?PRI[p].color:"#6b7280"}}>
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Description *</label>
+            <textarea value={f.description} onChange={e=>set("description",e.target.value)} rows={4}
+              style={{...InputStyle,resize:"none"}}/>
+          </div>
+
+          <div>
+            <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Tags</label>
+            <div style={{display:"flex",gap:8}}>
+              <input value={tag} onChange={e=>setTag(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTag();}}}
+                placeholder="Type a tag and press Enter" style={{...InputStyle,flex:1}}/>
+              <Btn onClick={addTag} style={{background:"#f3f4f6",color:"#374151",border:"1px solid #e5e7eb"}}>Add</Btn>
+            </div>
+            {f.tags?.length>0&&(
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
+                {f.tags.map((t,i)=>(
+                  <span key={i} style={{display:"flex",alignItems:"center",gap:4,padding:"3px 10px",
+                    background:"#eef2ff",color:"#4f46e5",borderRadius:999,fontSize:12,fontWeight:500}}>
+                    {t}
+                    <button onClick={()=>set("tags",f.tags.filter((_,j)=>j!==i))}
+                      style={{background:"none",border:"none",cursor:"pointer",color:"#4f46e5",lineHeight:1,padding:0}}>
+                      <SVG d={IC.x} size={11}/>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{display:"flex",gap:10,paddingTop:4}}>
+            <Btn onClick={onClose} style={{flex:1,background:"#f3f4f6",color:"#374151",border:"1px solid #e5e7eb"}}>Cancel</Btn>
+            <Btn onClick={()=>valid&&onSave(f)} disabled={!valid}
+              style={{flex:2,background:valid?"#4f46e5":"#f3f4f6",color:valid?"#fff":"#9ca3af",cursor:valid?"pointer":"not-allowed"}}>
+              Save Changes
+            </Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BOARD
 // ─────────────────────────────────────────────────────────────────────────────
-const Board = ({ reqs, onStatus, onRemove, lists, initialFilters={}, onBack }) => {
+const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onBack }) => {
   const [fl, setFl] = useState({ status:"",product:"",productSubset:"",area:"",ebcType:"",client:"",q:"", ...initialFilters });
   const [exp, setExp] = useState(null);
+  const [editing, setEditing] = useState(null);
   const sf = (k,v) => setFl(p => ({...p,[k]:v}));
 
   const filtered = useMemo(() => reqs.filter(r => {
@@ -851,6 +1051,14 @@ const Board = ({ reqs, onStatus, onRemove, lists, initialFilters={}, onBack }) =
           </div>
         ))
       }
+      {editing && (
+        <EditModal
+          request={editing}
+          lists={lists}
+          onSave={updated => { onEdit(updated); setEditing(null); setExp(null); }}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 };
@@ -985,12 +1193,19 @@ const App = () => {
 
   const save = useCallback(async data => {
     setSyncing(true); setSynced(false);
-    try { await saveData(data); } catch(_) {}
-    setSyncing(false); setSynced(true);
+    try {
+      await saveData(data);
+      setSyncing(false); setSynced(true);
+    } catch(e) {
+      setSyncing(false); setSynced(false);
+      alert("⚠️ Failed to save to Gist. Your changes are not persisted.\n\nError: " + e.message + "\n\nYour token may have expired. Refresh the page to re-enter it.");
+      setNeedsSetup(true);
+    }
   }, []);
 
   const addReq    = form => { const r={...form,id:uid(),status:"Backlog",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}; const u=[r,...reqs]; setReqs(u); save(u); };
   const updStatus = (id,status) => { const u=reqs.map(r=>r.id===id?{...r,status,updatedAt:new Date().toISOString()}:r); setReqs(u); save(u); };
+  const updateReq = updated => { const u=reqs.map(r=>r.id===updated.id?{...updated,updatedAt:new Date().toISOString()}:r); setReqs(u); save(u); };
   const removeReq = id => { const u=reqs.filter(r=>r.id!==id); setReqs(u); save(u); };
   const importReqs= rows => { const u=[...rows,...reqs]; setReqs(u); save(u); };
 
@@ -1049,7 +1264,7 @@ const App = () => {
       <main style={{ maxWidth:1200, margin:"0 auto", padding:"28px 24px" }}>
         {view==="dashboard" && <Dashboard reqs={reqs} onImport={()=>setView("import")} onNavigate={navigateBoard} onStatus={updStatus}/>}
         {view==="submit"    && <SubmitForm onSubmit={addReq} onDone={()=>setView("board")} lists={lists}/>}
-        {view==="board"     && <Board key={JSON.stringify(boardFilters)} reqs={reqs} onStatus={updStatus} onRemove={removeReq} lists={lists} initialFilters={boardFilters} onBack={Object.keys(boardFilters).length?()=>setView("dashboard"):null}/>}
+        {view==="board"     && <Board key={JSON.stringify(boardFilters)} reqs={reqs} onStatus={updStatus} onRemove={removeReq} onEdit={updateReq} lists={lists} initialFilters={boardFilters} onBack={Object.keys(boardFilters).length?()=>setView("dashboard"):null}/>}
         {view==="query"     && <AIQuery reqs={reqs}/>}
         {view==="import"    && <ImportView onImport={importReqs} onDone={()=>setView("dashboard")}/>}
       </main>
