@@ -28,261 +28,327 @@ const {useState,useEffect,useCallback,useMemo} = React;
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────────────────────────────────────
-const GIST_ID   = "d8a024c319d8ec7061ce6d7d94b5f3f4";
-const GIST_FILE = "featuretrack-db.json";
-const ANTH_KEY  = ""; // Optional: paste your Anthropic API key for AI Insights
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TOKEN — stored in browser localStorage only, never in source code
-// ─────────────────────────────────────────────────────────────────────────────
-const getToken   = () => localStorage.getItem("ft_gist_token") || "";
-const saveToken  = t  => localStorage.setItem("ft_gist_token", t);
-const clearToken = () => localStorage.removeItem("ft_gist_token");
+const GIST_ID    = "d8a024c319d8ec7061ce6d7d94b5f3f4";
+const GIST_FILE  = "featuretrack-db.json";
+const GIST_TOKEN = "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";
+const ANTH_KEY   = ""; // Optional: paste your Anthropic API key for AI Insights
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GIST API — single source of truth for all data
 // ─────────────────────────────────────────────────────────────────────────────
-const GIST_URL = `https://api.github.com/gists/${GIST_ID}`;
-const gistHeaders = () => ({
-  "Authorization": `token ${getToken()}`,
+const GIST_URL = "https://api.github.com/gists/" + GIST_ID;
+const gistHeaders = {
+  "Authorization": "token " + GIST_TOKEN,
   "Accept": "application/vnd.github.v3+json",
   "Content-Type": "application/json",
   "User-Agent": "FeatureTrack"
-});
+};
 const loadData = async () => {
-  const r = await fetch(GIST_URL, { headers: gistHeaders() });
-  if (!r.ok) throw new Error(`${r.status}`);
+  const r = await fetch(GIST_URL, {headers: gistHeaders});
+  if (!r.ok) throw new Error(r.status);
   const d = await r.json();
-  return JSON.parse(d.files[GIST_FILE]?.content || "[]");
+  return JSON.parse(d.files[GIST_FILE] ? d.files[GIST_FILE].content : "[]");
 };
-const saveData = async records => {
-  const r = await fetch(GIST_URL, {
-    method: "PATCH", headers: gistHeaders(),
-    body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(records) } } })
-  });
-  if (!r.ok) throw new Error(`${r.status}`);
+const saveData = async (records) => {
+  const body = {files: {}};
+  body.files[GIST_FILE] = {content: JSON.stringify(records)};
+  const r = await fetch(GIST_URL, {method:"PATCH", headers: gistHeaders, body: JSON.stringify(body)});
+  if (!r.ok) throw new Error(r.status);
 };
+const normalizeRecord = (r) => ({
+  ...r,
+  client: Array.isArray(r.client) ? r.client : (r.client ? [r.client] : [])
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 const STATUS = {
-  Backlog:   { bg:"#f1f5f9", color:"#475569", dot:"#94a3b8" },
-  Accepted:  { bg:"#dbeafe", color:"#1d4ed8", dot:"#3b82f6" },
-  Completed: { bg:"#d1fae5", color:"#065f46", dot:"#10b981" },
+  Backlog:   {bg:"#f1f5f9", color:"#475569", dot:"#94a3b8"},
+  Accepted:  {bg:"#dbeafe", color:"#1d4ed8", dot:"#3b82f6"},
+  Completed: {bg:"#d1fae5", color:"#065f46", dot:"#10b981"}
 };
 const PRI = {
-  Low:    { color:"#64748b", bg:"#f8fafc", border:"#e2e8f0" },
-  Medium: { color:"#d97706", bg:"#fffbeb", border:"#fde68a" },
-  High:   { color:"#dc2626", bg:"#fef2f2", border:"#fecaca" },
+  Low:    {color:"#64748b", bg:"#f8fafc", border:"#e2e8f0"},
+  Medium: {color:"#d97706", bg:"#fffbeb", border:"#fde68a"},
+  High:   {color:"#dc2626", bg:"#fef2f2", border:"#fecaca"}
 };
-const normalizeStatus = v => {
+const normalizeStatus = (v) => {
   if (!v) return "Backlog";
   const s = v.toString().toLowerCase();
   if (/complet|done|released?|shipped|closed|resolved/.test(s)) return "Completed";
   if (/accept|approv|in.?progress|planned|active|scheduled/.test(s)) return "Accepted";
   return "Backlog";
 };
-const normalizePriority = v => {
+const normalizePriority = (v) => {
   if (!v) return "Medium";
   const s = v.toString().toLowerCase();
   if (/high|p1|critical|urgent|must/.test(s)) return "High";
   if (/low|p3|p4|nice|minor|wish/.test(s)) return "Low";
   return "Medium";
 };
-const parseDate = v => {
+const parseDate = (v) => {
   if (!v) return new Date().toISOString();
   if (v instanceof Date) return isNaN(v) ? new Date().toISOString() : v.toISOString();
-  const d = new Date(v); return isNaN(d) ? new Date().toISOString() : d.toISOString();
+  const d = new Date(v);
+  return isNaN(d) ? new Date().toISOString() : d.toISOString();
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // XLSX IMPORT
 // ─────────────────────────────────────────────────────────────────────────────
 const FIELD_PATTERNS = {
-  title:            /title|request.?name|feature.?name|fer.?name|summary|subject/i,
-  description:      /description|details?|notes?|comments?|use.?case|background/i,
-  client:           /client|customer|account|company|org/i,
-  productArea:      /product.?area|^area$/i,
-  product:          /product/i,
-  engagementFormat: /ebc|events?|reference|engagement.?format/i,
-  priority:         /priority|urgency|severity/i,
-  status:           /^status$|stage|state/i,
-  submittedBy:      /submitted.?by|requestor|owner|csm|rep|requested.?by/i,
-  date:             /date|submitted.?date|created.?date/i,
-  tags:             /tag|label/i,
+  title:           /title|request.?name|feature.?name|fer.?name|summary|subject/i,
+  description:     /description|details?|notes?|comments?|use.?case|background/i,
+  client:          /client|customer|account|company|org/i,
+  productArea:     /product.?area|^area$/i,
+  product:         /product/i,
+  engagementFormat:/ebc|events?|reference|engagement.?format/i,
+  priority:        /priority|urgency|severity/i,
+  status:          /^status$|stage|state/i,
+  submittedBy:     /submitted.?by|requestor|owner|csm|rep|requested.?by/i,
+  date:            /date|submitted.?date|created.?date/i,
+  tags:            /tag|label/i
 };
-const detectColumns = headers => {
+const detectColumns = (headers) => {
   const map = {};
-  headers.forEach(h => {
+  headers.forEach((h) => {
     if (!h) return;
     const t = h.toString().trim();
-    for (const [field, rx] of Object.entries(FIELD_PATTERNS)) {
-      if (!map[field] && rx.test(t)) { map[field] = h; break; }
+    for (const field in FIELD_PATTERNS) {
+      if (!map[field] && FIELD_PATTERNS[field].test(t)) { map[field] = h; break; }
     }
   });
   return map;
 };
 const mapRow = (row, colMap, allHeaders) => {
-  const g = f => { const c = colMap[f]; return c !== undefined ? row[c] : undefined; };
-  const str = v => (v !== null && v !== undefined && v !== '') ? v.toString().trim() : '';
+  const g = (f) => { const c = colMap[f]; return c !== undefined ? row[c] : undefined; };
+  const str = (v) => (v !== null && v !== undefined && v !== '') ? v.toString().trim() : '';
   const mappedCols = new Set(Object.values(colMap));
-  let tags = [];
+  const tags = [];
   const tagVal = str(g('tags'));
-  if (tagVal) tags = tagVal.split(/[,;|]/).map(t => t.trim()).filter(Boolean);
-  allHeaders.forEach(h => { if (!mappedCols.has(h) && h) { const v = str(row[h]); if (v) tags.push(`${h}: ${v}`); } });
+  if (tagVal) tagVal.split(/[,;|]/).forEach((t) => { const x = t.trim(); if (x) tags.push(x); });
+  allHeaders.forEach((h) => { if (!mappedCols.has(h) && h) { const v = str(row[h]); if (v) tags.push(h + ": " + v); } });
+  const clientRaw = str(g('client'));
   return {
     id: uid(),
-    title: str(g('title')) || str(g('description'))?.slice(0,60) || 'Untitled',
-    description: str(g('description')), client: str(g('client')),
-    product: str(g('product')), productArea: str(g('productArea')),
+    title: str(g('title')) || str(g('description')).slice(0,60) || 'Untitled',
+    description: str(g('description')),
+    client: clientRaw ? clientRaw.split(/[,;]/).map((c) => c.trim()).filter(Boolean) : [],
+    product: str(g('product')),
+    productArea: str(g('productArea')),
     engagementFormat: str(g('engagementFormat')),
-    submittedBy: str(g('submittedBy')), priority: normalizePriority(g('priority')),
-    status: normalizeStatus(g('status')), tags,
-    createdAt: parseDate(g('date')), updatedAt: parseDate(g('date')), isClient: !!str(g('client')),
+    submittedBy: str(g('submittedBy')),
+    priority: normalizePriority(g('priority')),
+    status: normalizeStatus(g('status')),
+    tags: tags,
+    createdAt: parseDate(g('date')),
+    updatedAt: parseDate(g('date'))
   };
 };
-const parseXLSX = buf => {
-  const wb = XLSX.read(buf, { type:'array', cellDates:true });
+const parseXLSX = (buf) => {
+  const wb = XLSX.read(buf, {type:'array', cellDates:true});
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const rawRows = XLSX.utils.sheet_to_json(ws, { defval:'' });
-  if (!rawRows.length) return { rows:[], rawRows:[], headers:[], colMap:{} };
+  const rawRows = XLSX.utils.sheet_to_json(ws, {defval:''});
+  if (!rawRows.length) return {rows:[], rawRows:[], headers:[], colMap:{}};
   const headers = Object.keys(rawRows[0]);
   const colMap = detectColumns(headers);
-  return { rows: rawRows.map(r => mapRow(r, colMap, headers)), rawRows, headers, colMap };
+  return {rows: rawRows.map((r) => mapRow(r, colMap, headers)), rawRows: rawRows, headers: headers, colMap: colMap};
 };
-parseXLSX.remap = (rawRows, headers, colMap) => rawRows.map(r => mapRow(r, colMap, headers));
+parseXLSX.remap = (rawRows, headers, colMap) => rawRows.map((r) => mapRow(r, colMap, headers));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ICONS
 // ─────────────────────────────────────────────────────────────────────────────
-const SVG = ({ d, size=16, color="currentColor", style={} }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style}>
-    {Array.isArray(d) ? d.map((p,i)=><path key={i} d={p}/>) : <path d={d}/>}
-  </svg>
-);
+const SVG = ({d, size, color, style}) => {
+  size = size || 16; color = color || "currentColor"; style = style || {};
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style}>
+      {Array.isArray(d) ? d.map((p,i) => <path key={i} d={p}/>) : <path d={d}/>}
+    </svg>
+  );
+};
 const IC = {
-  zap:   "M13 2L3 14h9l-1 8 10-12h-9z",
-  plus:  ["M12 5v14","M5 12h14"],
-  list:  ["M9 6h11","M9 12h11","M9 18h11","M4 6h.01","M4 12h.01","M4 18h.01"],
-  bar:   ["M18 20V10","M12 20V4","M6 20v-6"],
-  spark: ["M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3M6.343 6.343l-.707-.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"],
-  upload:["M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4","M17 8l-5-5-5 5","M12 3v12"],
-  x:     ["M18 6L6 18","M6 6l12 12"],
-  check: "M20 6L9 17l-5-5",
-  chevD: "M6 9l6 6 6-6",
-  chevU: "M18 15l-6-6-6 6",
-  spin:  "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15",
-  file:  ["M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z","M14 2v6h6"],
-  back:  ["M19 12H5","M12 19l-7-7 7-7"],
+  zap:    "M13 2L3 14h9l-1 8 10-12h-9z",
+  plus:   ["M12 5v14","M5 12h14"],
+  list:   ["M9 6h11","M9 12h11","M9 18h11","M4 6h.01","M4 12h.01","M4 18h.01"],
+  bar:    ["M18 20V10","M12 20V4","M6 20v-6"],
+  spark:  ["M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3M6.343 6.343l-.707-.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"],
+  upload: ["M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4","M17 8l-5-5-5 5","M12 3v12"],
+  x:      ["M18 6L6 18","M6 6l12 12"],
+  check:  "M20 6L9 17l-5-5",
+  chevD:  "M6 9l6 6 6-6",
+  chevU:  "M18 15l-6-6-6 6",
+  spin:   "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15",
+  file:   ["M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z","M14 2v6h6"],
+  back:   ["M19 12H5","M12 19l-7-7 7-7"],
+  trash:  ["M3 6h18","M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"],
+  settings: ["M12 15a3 3 0 100-6 3 3 0 000 6z","M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"]
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UI PRIMITIVES
 // ─────────────────────────────────────────────────────────────────────────────
-const Card = ({ children, style={} }) => (
-  <div style={{ background:"#fff", borderRadius:12, border:"1px solid #e5e7eb", padding:20, ...style }}>{children}</div>
+const Card = ({children, style}) => (
+  <div style={Object.assign({background:"#fff",borderRadius:12,border:"1px solid #e5e7eb",padding:20},style||{})}>{children}</div>
 );
-const StatusPill = ({ status }) => (
-  <span style={{ display:"inline-flex", alignItems:"center", gap:5, fontSize:11, fontWeight:600,
-    padding:"2px 8px", borderRadius:999, background:STATUS[status].bg, color:STATUS[status].color }}>
-    <span style={{ width:6, height:6, borderRadius:"50%", background:STATUS[status].dot, flexShrink:0 }}/>{status}
+const StatusPill = ({status}) => (
+  <span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:999,background:STATUS[status].bg,color:STATUS[status].color}}>
+    <span style={{width:6,height:6,borderRadius:"50%",background:STATUS[status].dot,flexShrink:0}}/>{status}
   </span>
 );
-const PriBadge = ({ p }) => (
-  <span style={{ fontSize:11, fontWeight:600, padding:"2px 8px", borderRadius:999,
-    border:`1px solid ${PRI[p].border}`, color:PRI[p].color, background:PRI[p].bg }}>{p}</span>
+const PriBadge = ({p}) => (
+  <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:999,border:"1px solid "+PRI[p].border,color:PRI[p].color,background:PRI[p].bg}}>{p}</span>
 );
-const Tag = ({ children }) => (
-  <span style={{ fontSize:11, background:"#f8fafc", color:"#475569", border:"1px solid #e2e8f0", borderRadius:999, padding:"2px 8px" }}>{children}</span>
+const Tag = ({children}) => (
+  <span style={{fontSize:11,background:"#f8fafc",color:"#475569",border:"1px solid #e2e8f0",borderRadius:999,padding:"2px 8px"}}>{children}</span>
 );
-const Btn = ({ onClick, disabled, style={}, children }) => (
-  <button onClick={onClick} disabled={disabled}
-    style={{ border:"none", borderRadius:8, padding:"8px 16px", fontSize:13, fontWeight:600, cursor:disabled?"not-allowed":"pointer", ...style }}>{children}</button>
+const Btn = ({onClick, disabled, style, children}) => (
+  <button onClick={onClick} disabled={disabled} style={Object.assign({border:"none",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:disabled?"not-allowed":"pointer"},style||{})}>{children}</button>
 );
-const InputStyle = { width:"100%", border:"1px solid #d1d5db", borderRadius:8, padding:"8px 12px", fontSize:13, background:"#fff" };
-const SectionLabel = ({ children }) => (
-  <p style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.8px", margin:"0 0 8px" }}>{children}</p>
-);
+const IS = {width:"100%",border:"1px solid #d1d5db",borderRadius:8,padding:"8px 12px",fontSize:13,background:"#fff"};
+const SL = ({children}) => <p style={{fontSize:10,fontWeight:700,color:"#9ca3af",textTransform:"uppercase",letterSpacing:"0.8px",margin:"0 0 8px"}}>{children}</p>;
 
-// Classification field — datalist input that supports selecting existing OR typing a new value
-const ClassField = ({ label, value, onChange, listId, options, hint }) => (
-  <div>
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6 }}>
-      <label style={{ fontSize:13, fontWeight:500, color:"#374151" }}>{label}</label>
-      <span style={{ fontSize:10, color:"#9ca3af" }}>Select or type new</span>
+// ─────────────────────────────────────────────────────────────────────────────
+// MULTI-SELECT FIELD (Client)
+// ─────────────────────────────────────────────────────────────────────────────
+const MultiSelectField = ({label, values, onChange, listId, options}) => {
+  const [input, setInput] = useState("");
+  values = values || []; options = options || [];
+  const add = (val) => {
+    const v = val.trim();
+    if (v && values.indexOf(v) === -1) onChange(values.concat([v]));
+    setInput("");
+  };
+  const remove = (v) => onChange(values.filter((x) => x !== v));
+  const isNew = input.trim() && options.indexOf(input.trim()) === -1 && values.indexOf(input.trim()) === -1;
+  return (
+    <div>
+      <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>{label}</label>
+      <div style={{border:"1px solid #d1d5db",borderRadius:8,padding:"6px 10px",background:"#fff",minHeight:42}}>
+        {values.length > 0 && (
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+            {values.map((v) => (
+              <span key={v} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",background:"#eef2ff",color:"#4f46e5",borderRadius:999,fontSize:12,fontWeight:500}}>
+                {v}
+                <button onClick={() => remove(v)} style={{background:"none",border:"none",cursor:"pointer",color:"#4f46e5",padding:0,lineHeight:1,display:"flex"}}>
+                  <SVG d={IC.x} size={10}/>
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div style={{display:"flex",gap:6}}>
+          <input list={listId} value={input}
+            onChange={(e) => {
+              const v = e.target.value;
+              setInput(v);
+              if (options.indexOf(v) !== -1 && values.indexOf(v) === -1) { onChange(values.concat([v])); setInput(""); }
+            }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(input); } }}
+            placeholder={values.length ? "Add another client…" : "Type client name…"}
+            style={{flex:1,border:"none",fontSize:13,padding:"2px 0",outline:"none",background:"transparent"}}/>
+          {input.trim() && <button onClick={() => add(input)} style={{border:"none",background:"none",cursor:"pointer",color:"#4f46e5",fontSize:12,fontWeight:600,padding:"0 4px"}}>Add</button>}
+        </div>
+      </div>
+      <datalist id={listId}>{options.filter((o) => values.indexOf(o) === -1).map((v) => <option key={v} value={v}/>)}</datalist>
+      {isNew && <p style={{fontSize:10,color:"#d97706",marginTop:4}}>✦ New client — will be added to the list on save</p>}
     </div>
-    <input list={listId} value={value} onChange={e=>onChange(e.target.value)}
-      placeholder="Choose existing or type to add new…"
-      style={{ ...InputStyle, background: value && !options.includes(value) ? "#fffbeb" : "#fff" }}/>
-    <datalist id={listId}>{options.map(v=><option key={v} value={v}/>)}</datalist>
-    {value && !options.includes(value) &&
-      <p style={{ fontSize:10, color:"#d97706", marginTop:4 }}>✦ New value — will be added to the list on save</p>}
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLASS FIELD (single-select with free-type)
+// ─────────────────────────────────────────────────────────────────────────────
+const ClassField = ({label, value, onChange, listId, options}) => {
+  options = options || [];
+  const isNew = value && options.indexOf(value) === -1;
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+        <label style={{fontSize:13,fontWeight:500,color:"#374151"}}>{label}</label>
+        <span style={{fontSize:10,color:"#9ca3af"}}>Select or type new</span>
+      </div>
+      <input list={listId} value={value} onChange={(e) => onChange(e.target.value)}
+        placeholder="Choose existing or type to add new…"
+        style={Object.assign({},IS,{background:isNew?"#fffbeb":"#fff"})}/>
+      <datalist id={listId}>{options.map((v) => <option key={v} value={v}/>)}</datalist>
+      {isNew && <p style={{fontSize:10,color:"#d97706",marginTop:4}}>✦ New value — will be added to the list on save</p>}
+    </div>
+  );
+};
+
+const ClassFields = ({f, set, lists, pfx}) => (
+  <div>
+    <SL>Classifications</SL>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+      <ClassField label="Product *" value={f.product} onChange={(v) => set("product",v)} listId={pfx+"pl"} options={lists.products}/>
+      <ClassField label="Product Area" value={f.productArea} onChange={(v) => set("productArea",v)} listId={pfx+"al"} options={lists.productAreas}/>
+    </div>
+    <ClassField label="Engagement Format" value={f.engagementFormat} onChange={(v) => set("engagementFormat",v)} listId={pfx+"ef"} options={lists.engagementFormats}/>
   </div>
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MARKDOWN
 // ─────────────────────────────────────────────────────────────────────────────
-const bold = txt => txt.split(/(\*\*[^*]+\*\*)/).map((p,i) =>
-  p.startsWith("**")&&p.endsWith("**") ? <strong key={i}>{p.slice(2,-2)}</strong> : p
+const bold = (txt) => txt.split(/(\*\*[^*]+\*\*)/).map((p,i) =>
+  p.startsWith("**") && p.endsWith("**") ? <strong key={i}>{p.slice(2,-2)}</strong> : p
 );
-const MD = ({ text }) => (
-  <div style={{ lineHeight:1.7 }}>
+const MD = ({text}) => (
+  <div style={{lineHeight:1.7}}>
     {text.split("\n").map((ln,i) => {
-      if (!ln.trim()) return <div key={i} style={{ height:8 }}/>;
-      if (ln.startsWith("### ")) return <p key={i} style={{ fontWeight:600, fontSize:13, margin:"14px 0 4px" }}>{ln.slice(4)}</p>;
-      if (ln.startsWith("## "))  return <p key={i} style={{ fontWeight:700, fontSize:15, margin:"18px 0 6px" }}>{ln.slice(3)}</p>;
+      if (!ln.trim()) return <div key={i} style={{height:8}}/>;
+      if (ln.startsWith("### ")) return <p key={i} style={{fontWeight:600,fontSize:13,margin:"14px 0 4px"}}>{ln.slice(4)}</p>;
+      if (ln.startsWith("## "))  return <p key={i} style={{fontWeight:700,fontSize:15,margin:"18px 0 6px"}}>{ln.slice(3)}</p>;
       const bul = ln.match(/^[-*]\s(.+)/);
-      if (bul) return <p key={i} style={{ fontSize:13, margin:"3px 0", paddingLeft:12 }}>• {bold(bul[1])}</p>;
-      return <p key={i} style={{ fontSize:13, margin:"3px 0" }}>{bold(ln)}</p>;
+      if (bul) return <p key={i} style={{fontSize:13,margin:"3px 0",paddingLeft:12}}>{"• "}{bold(bul[1])}</p>;
+      return <p key={i} style={{fontSize:13,margin:"3px 0"}}>{bold(ln)}</p>;
     })}
   </div>
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SETUP SCREEN
+// MANAGE LISTS
 // ─────────────────────────────────────────────────────────────────────────────
-const SetupScreen = ({ onDone }) => {
-  const [token, setToken] = useState("");
-  const [testing, setTesting] = useState(false);
-  const [error, setError] = useState("");
-  const handleSave = async () => {
-    if (!token.trim()) return;
-    setTesting(true); setError("");
-    try { saveToken(token.trim()); const data = await loadData(); onDone(data); }
-    catch(e) { setError("Could not connect. Check your token has 'gist' scope. Error: " + e.message); clearToken(); }
-    setTesting(false);
-  };
+const ManageView = ({lists, onDelete}) => {
+  const [confirming, setConfirming] = useState(null);
+  const fields = [
+    {key:"product",          label:"Product",           values:lists.products},
+    {key:"productArea",      label:"Product Area",       values:lists.productAreas},
+    {key:"engagementFormat", label:"Engagement Format",  values:lists.engagementFormats},
+    {key:"client",           label:"Client",             values:lists.clients}
+  ];
   return (
-    <div style={{ minHeight:"100vh", background:"#f9fafb", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
-      <div style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", padding:40, maxWidth:480, width:"100%", boxShadow:"0 4px 24px rgba(0,0,0,0.06)" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:24 }}>
-          <div style={{ width:32, height:32, background:"#4f46e5", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <SVG d={IC.zap} size={18} color="#fff"/>
-          </div>
-          <span style={{ fontSize:20, fontWeight:700, color:"#111827" }}>FeatureTrack</span>
-        </div>
-        <h2 style={{ fontSize:16, fontWeight:700, color:"#111827", marginBottom:6 }}>Enter your GitHub Token</h2>
-        <p style={{ fontSize:13, color:"#6b7280", marginBottom:20, lineHeight:1.6 }}>A GitHub Personal Access Token is needed to read and write the shared database. It is stored only in your browser — never in the source code.</p>
-        <div style={{ background:"#f8fafc", borderRadius:10, padding:16, marginBottom:20, fontSize:12, color:"#475569", lineHeight:1.8 }}>
-          <strong>To create a token:</strong><br/>
-          1. Go to <strong>github.com → Settings → Developer Settings</strong><br/>
-          2. Click <strong>Personal Access Tokens → Tokens (classic)</strong><br/>
-          3. Click <strong>Generate new token (classic)</strong><br/>
-          4. Check only the <strong>gist</strong> scope<br/>
-          5. Copy and paste it below
-        </div>
-        <input value={token} onChange={e=>setToken(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSave()}
-          placeholder="ghp_…" style={{ ...InputStyle, marginBottom:12, fontFamily:"monospace", fontSize:12 }}/>
-        {error && <p style={{ fontSize:12, color:"#dc2626", marginBottom:12, lineHeight:1.5 }}>{error}</p>}
-        <Btn onClick={handleSave} disabled={!token.trim()||testing}
-          style={{ width:"100%", padding:"11px 0", background:token.trim()&&!testing?"#4f46e5":"#f3f4f6", color:token.trim()&&!testing?"#fff":"#9ca3af" }}>
-          {testing?"Connecting…":"Connect & Launch"}
-        </Btn>
+    <div style={{maxWidth:700,margin:"0 auto",display:"flex",flexDirection:"column",gap:20}}>
+      <div>
+        <h2 style={{fontSize:18,fontWeight:700,color:"#111827",marginBottom:4}}>Manage Classifications</h2>
+        <p style={{fontSize:13,color:"#6b7280"}}>Permanently remove a value from a field. It will be removed from all existing requests and from future dropdowns.</p>
       </div>
+      {fields.map(({key, label, values}) => (
+        <Card key={key}>
+          <p style={{fontWeight:600,fontSize:14,color:"#111827",marginBottom:14}}>{label}</p>
+          {!values.length
+            ? <p style={{fontSize:13,color:"#9ca3af",fontStyle:"italic"}}>No values yet</p>
+            : values.map((v) => (
+              <div key={v} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:"1px solid #f3f4f6"}}>
+                <span style={{fontSize:13,color:"#374151"}}>{v}</span>
+                {confirming && confirming.field === key && confirming.value === v
+                  ? <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <span style={{fontSize:12,color:"#dc2626",fontWeight:500}}>Remove from all records?</span>
+                      <button onClick={() => { onDelete(key, v); setConfirming(null); }} style={{padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:600,background:"#dc2626",color:"#fff",border:"none",cursor:"pointer"}}>Yes, remove</button>
+                      <button onClick={() => setConfirming(null)} style={{padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:600,background:"#f3f4f6",color:"#6b7280",border:"none",cursor:"pointer"}}>Cancel</button>
+                    </div>
+                  : <button onClick={() => setConfirming({field:key,value:v})} style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:500,background:"#fef2f2",color:"#dc2626",border:"1px solid #fecaca",cursor:"pointer"}}>
+                      <SVG d={IC.trash} size={11} color="#dc2626"/> Remove
+                    </button>
+                }
+              </div>
+            ))
+          }
+        </Card>
+      ))}
     </div>
   );
 };
@@ -290,87 +356,105 @@ const SetupScreen = ({ onDone }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
-const Dashboard = ({ reqs, onImport, onNavigate, onStatus }) => {
+const Dashboard = ({reqs, onImport, onNavigate, onStatus}) => {
   const [selected, setSelected] = useState(null);
-  const byStatus = useMemo(()=>{ const m={Backlog:0,Accepted:0,Completed:0}; reqs.forEach(r=>m[r.status]=(m[r.status]||0)+1); return m; },[reqs]);
-  const topN = (key,n=6) => { const m={}; reqs.forEach(r=>{const v=r[key];if(v)m[v]=(m[v]||0)+1;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,n); };
-  const topProds    = useMemo(()=>topN('product'),[reqs]);
-  const topAreas    = useMemo(()=>topN('productArea'),[reqs]);
-  const topFormats  = useMemo(()=>topN('engagementFormat'),[reqs]);
-  const topClients  = useMemo(()=>topN('client'),[reqs]);
-  const recent      = useMemo(()=>[...reqs].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,6),[reqs]);
+  const byStatus = useMemo(() => {
+    const m = {Backlog:0,Accepted:0,Completed:0};
+    reqs.forEach((r) => { m[r.status] = (m[r.status]||0) + 1; });
+    return m;
+  }, [reqs]);
+  const topN = (key, n) => {
+    n = n || 6;
+    const m = {};
+    reqs.forEach((r) => { const v = r[key]; if (v) m[v] = (m[v]||0) + 1; });
+    return Object.entries(m).sort((a,b) => b[1]-a[1]).slice(0,n);
+  };
+  const topProds   = useMemo(() => topN('product'),          [reqs]);
+  const topAreas   = useMemo(() => topN('productArea'),      [reqs]);
+  const topFormats = useMemo(() => topN('engagementFormat'), [reqs]);
+  const topClients = useMemo(() => {
+    const m = {};
+    reqs.forEach((r) => (r.client||[]).forEach((c) => { if (c) m[c] = (m[c]||0) + 1; }));
+    return Object.entries(m).sort((a,b) => b[1]-a[1]).slice(0,6);
+  }, [reqs]);
+  const recent = useMemo(() => reqs.slice().sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt)).slice(0,6), [reqs]);
 
-  const renderBar = (items, color, filterKey) => !items.length
-    ? <p style={{ fontSize:13, color:"#9ca3af", fontStyle:"italic" }}>No data</p>
-    : <div>{items.map(([k,v])=>(
-        <button key={k} onClick={()=>onNavigate({[filterKey]:k})}
-          style={{ display:"block", width:"100%", textAlign:"left", background:"none", border:"none", padding:"5px 6px", borderRadius:6, cursor:"pointer", marginBottom:4 }}
-          onMouseEnter={e=>e.currentTarget.style.background="#eef2ff"}
-          onMouseLeave={e=>e.currentTarget.style.background="none"}>
-          <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:3 }}>
-            <span style={{ color:"#374151", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{k}</span>
-            <span style={{ color:"#6b7280", marginLeft:8, fontWeight:500, flexShrink:0 }}>{v}</span>
+  const renderBar = (items, color, filterKey) => {
+    if (!items.length) return <p style={{fontSize:13,color:"#9ca3af",fontStyle:"italic"}}>No data</p>;
+    return (
+      <div>{items.map(([k,v]) => (
+        <button key={k} onClick={() => onNavigate({[filterKey]:k})}
+          style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",padding:"5px 6px",borderRadius:6,cursor:"pointer",marginBottom:4}}
+          onMouseEnter={(e) => e.currentTarget.style.background="#eef2ff"}
+          onMouseLeave={(e) => e.currentTarget.style.background="none"}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+            <span style={{color:"#374151",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{k}</span>
+            <span style={{color:"#6b7280",marginLeft:8,fontWeight:500,flexShrink:0}}>{v}</span>
           </div>
-          <div style={{ height:6, background:"#f3f4f6", borderRadius:999 }}>
-            <div style={{ height:6, borderRadius:999, width:`${(v/items[0][1])*100}%`, background:color }}/>
+          <div style={{height:6,background:"#f3f4f6",borderRadius:999}}>
+            <div style={{height:6,borderRadius:999,width:(v/items[0][1]*100)+"%",background:color}}/>
           </div>
         </button>
-      ))}</div>;
+      ))}</div>
+    );
+  };
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-      {reqs.length===0 && (
-        <div style={{ background:"#eef2ff", border:"1px solid #c7d2fe", borderRadius:12, padding:20, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+    <div style={{display:"flex",flexDirection:"column",gap:20}}>
+      {reqs.length === 0 && (
+        <div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:12,padding:20,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
-            <p style={{ fontWeight:600, color:"#3730a3", marginBottom:4 }}>No requests yet</p>
-            <p style={{ fontSize:13, color:"#4f46e5" }}>Import your FER spreadsheet or submit your first request.</p>
+            <p style={{fontWeight:600,color:"#3730a3",marginBottom:4}}>No requests yet</p>
+            <p style={{fontSize:13,color:"#4f46e5"}}>Import your FER spreadsheet or submit your first request.</p>
           </div>
-          <Btn onClick={onImport} style={{ background:"#4f46e5", color:"#fff", whiteSpace:"nowrap", marginLeft:16 }}>Import Sheet</Btn>
+          <Btn onClick={onImport} style={{background:"#4f46e5",color:"#fff",whiteSpace:"nowrap",marginLeft:16}}>Import Sheet</Btn>
         </div>
       )}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16 }}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16}}>
         {[["Total Requests",reqs.length,"#4f46e5","#eef2ff"],["Backlog",byStatus.Backlog,"#475569","#f1f5f9"],
           ["Accepted",byStatus.Accepted,"#1d4ed8","#dbeafe"],["Completed",byStatus.Completed,"#065f46","#d1fae5"]
-        ].map(([l,v,tc,bg])=>(
-          <div key={l} style={{ background:bg, borderRadius:12, padding:20 }}>
-            <p style={{ fontSize:11, color:"#6b7280", marginBottom:6 }}>{l}</p>
-            <p style={{ fontSize:30, fontWeight:700, color:tc }}>{v}</p>
+        ].map(([l,v,tc,bg]) => (
+          <div key={l} style={{background:bg,borderRadius:12,padding:20}}>
+            <p style={{fontSize:11,color:"#6b7280",marginBottom:6}}>{l}</p>
+            <p style={{fontSize:30,fontWeight:700,color:tc}}>{v}</p>
           </div>
         ))}
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:20 }}>
-        <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By Product</p>{renderBar(topProds,"#6366f1","product")}</Card>
-        <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By Product Area</p>{renderBar(topAreas,"#8b5cf6","area")}</Card>
-        <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By Engagement Format</p>{renderBar(topFormats,"#d946ef","engagementFormat")}</Card>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:20}}>
+        <Card><p style={{fontWeight:600,fontSize:13,marginBottom:14}}>By Product</p>{renderBar(topProds,"#6366f1","product")}</Card>
+        <Card><p style={{fontWeight:600,fontSize:13,marginBottom:14}}>By Product Area</p>{renderBar(topAreas,"#8b5cf6","area")}</Card>
+        <Card><p style={{fontWeight:600,fontSize:13,marginBottom:14}}>By Engagement Format</p>{renderBar(topFormats,"#d946ef","engagementFormat")}</Card>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
         <Card>
-          <p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>Top Requesting Clients</p>
-          {!topClients.length ? <p style={{ fontSize:13, color:"#9ca3af", fontStyle:"italic" }}>No client-linked requests</p>
-            : topClients.map(([c,v])=>(
-              <button key={c} onClick={()=>onNavigate({client:c})}
-                style={{ display:"flex", justifyContent:"space-between", alignItems:"center", width:"100%", background:"none", border:"none", padding:"7px 0", borderBottom:"1px solid #f3f4f6", cursor:"pointer" }}
-                onMouseEnter={e=>e.currentTarget.style.background="#f9fafb"}
-                onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                <span style={{ fontSize:13, color:"#374151" }}>{c}</span>
-                <span style={{ fontSize:11, fontWeight:600, background:"#eef2ff", color:"#4f46e5", padding:"2px 10px", borderRadius:999 }}>{v} req{v>1?"s":""}</span>
+          <p style={{fontWeight:600,fontSize:13,marginBottom:14}}>Top Requesting Clients</p>
+          {!topClients.length
+            ? <p style={{fontSize:13,color:"#9ca3af",fontStyle:"italic"}}>No client-linked requests</p>
+            : topClients.map(([c,v]) => (
+              <button key={c} onClick={() => onNavigate({client:c})}
+                style={{display:"flex",justifyContent:"space-between",alignItems:"center",width:"100%",background:"none",border:"none",padding:"7px 0",borderBottom:"1px solid #f3f4f6",cursor:"pointer"}}
+                onMouseEnter={(e) => e.currentTarget.style.background="#f9fafb"}
+                onMouseLeave={(e) => e.currentTarget.style.background="none"}>
+                <span style={{fontSize:13,color:"#374151"}}>{c}</span>
+                <span style={{fontSize:11,fontWeight:600,background:"#eef2ff",color:"#4f46e5",padding:"2px 10px",borderRadius:999}}>{v} req{v>1?"s":""}</span>
               </button>
             ))
           }
         </Card>
         <Card>
-          <p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>Recent Submissions</p>
-          {!recent.length ? <p style={{ fontSize:13, color:"#9ca3af", fontStyle:"italic" }}>None yet</p>
-            : <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {recent.map(r=>(
-                  <button key={r.id} onClick={()=>setSelected(r)}
-                    style={{ display:"flex", gap:10, alignItems:"flex-start", background:"none", border:"none", cursor:"pointer", textAlign:"left", borderRadius:8, padding:6 }}
-                    onMouseEnter={e=>e.currentTarget.style.background="#f9fafb"}
-                    onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                    <span style={{ width:8, height:8, borderRadius:"50%", background:STATUS[r.status].dot, flexShrink:0, marginTop:5 }}/>
-                    <div style={{ minWidth:0 }}>
-                      <p style={{ fontSize:13, fontWeight:500, color:"#111827", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.title}</p>
-                      <p style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}>{r.product||"—"} · {new Date(r.createdAt).toLocaleDateString()}</p>
+          <p style={{fontWeight:600,fontSize:13,marginBottom:14}}>Recent Submissions</p>
+          {!recent.length
+            ? <p style={{fontSize:13,color:"#9ca3af",fontStyle:"italic"}}>None yet</p>
+            : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {recent.map((r) => (
+                  <button key={r.id} onClick={() => setSelected(r)}
+                    style={{display:"flex",gap:10,alignItems:"flex-start",background:"none",border:"none",cursor:"pointer",textAlign:"left",borderRadius:8,padding:6}}
+                    onMouseEnter={(e) => e.currentTarget.style.background="#f9fafb"}
+                    onMouseLeave={(e) => e.currentTarget.style.background="none"}>
+                    <span style={{width:8,height:8,borderRadius:"50%",background:STATUS[r.status].dot,flexShrink:0,marginTop:5}}/>
+                    <div style={{minWidth:0}}>
+                      <p style={{fontSize:13,fontWeight:500,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</p>
+                      <p style={{fontSize:11,color:"#9ca3af",marginTop:2}}>{r.product||"—"} · {new Date(r.createdAt).toLocaleDateString()}</p>
                     </div>
                   </button>
                 ))}
@@ -379,35 +463,41 @@ const Dashboard = ({ reqs, onImport, onNavigate, onStatus }) => {
         </Card>
       </div>
       {selected && (
-        <div onClick={()=>setSelected(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
-          <div onClick={e=>e.stopPropagation()} style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:520, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.2)" }}>
-            <div style={{ padding:"20px 24px", borderBottom:"1px solid #f3f4f6", display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
+        <div onClick={() => setSelected(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div onClick={(e) => e.stopPropagation()} style={{background:"#fff",borderRadius:16,width:"100%",maxWidth:520,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+            <div style={{padding:"20px 24px",borderBottom:"1px solid #f3f4f6",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
               <div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}><StatusPill status={selected.status}/><PriBadge p={selected.priority}/></div>
-                <h2 style={{ fontSize:16, fontWeight:700, color:"#111827", lineHeight:1.4 }}>{selected.title}</h2>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}><StatusPill status={selected.status}/><PriBadge p={selected.priority}/></div>
+                <h2 style={{fontSize:16,fontWeight:700,color:"#111827",lineHeight:1.4}}>{selected.title}</h2>
               </div>
-              <button onClick={()=>setSelected(null)} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", flexShrink:0 }}><SVG d={IC.x} size={18}/></button>
+              <button onClick={() => setSelected(null)} style={{background:"none",border:"none",cursor:"pointer",color:"#9ca3af",flexShrink:0}}><SVG d={IC.x} size={18}/></button>
             </div>
-            <div style={{ padding:24, display:"flex", flexDirection:"column", gap:16 }}>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-                {[["Product",selected.product],["Product Area",selected.productArea],["Engagement Format",selected.engagementFormat],
-                  ["Client",selected.client],["Submitted By",selected.submittedBy]
-                ].filter(([,v])=>v).map(([l,v])=>(
-                  <div key={l}><SectionLabel>{l}</SectionLabel><p style={{ fontSize:13, fontWeight:500, color:"#1f2937" }}>{v}</p></div>
+            <div style={{padding:24,display:"flex",flexDirection:"column",gap:16}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+                {[["Product",selected.product],["Product Area",selected.productArea],["Engagement Format",selected.engagementFormat],["Submitted By",selected.submittedBy]].filter(([,v]) => v).map(([l,v]) => (
+                  <div key={l}><SL>{l}</SL><p style={{fontSize:13,fontWeight:500,color:"#1f2937"}}>{v}</p></div>
                 ))}
               </div>
-              {selected.description&&<><SectionLabel>Description</SectionLabel><p style={{ fontSize:13, color:"#374151", lineHeight:1.6, marginTop:-8 }}>{selected.description}</p></>}
-              {selected.tags?.length>0&&<><SectionLabel>Tags</SectionLabel><div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:-8 }}>{selected.tags.map((t,i)=><Tag key={i}>{t}</Tag>)}</div></>}
+              {selected.client && selected.client.length > 0 && (
+                <div>
+                  <SL>Clients</SL>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {selected.client.map((c,i) => <span key={i} style={{fontSize:12,background:"#f5f3ff",color:"#7c3aed",border:"1px solid #e9d5ff",borderRadius:999,padding:"2px 10px",fontWeight:500}}>{c}</span>)}
+                  </div>
+                </div>
+              )}
+              {selected.description && <><SL>Description</SL><p style={{fontSize:13,color:"#374151",lineHeight:1.6,marginTop:-8}}>{selected.description}</p></>}
+              {selected.tags && selected.tags.length > 0 && <><SL>Tags</SL><div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:-8}}>{selected.tags.map((t,i) => <Tag key={i}>{t}</Tag>)}</div></>}
               <div>
-                <SectionLabel>Move To</SectionLabel>
-                <div style={{ display:"flex", gap:8 }}>
-                  {Object.keys(STATUS).map(s=>(
-                    <button key={s} onClick={()=>{onStatus(selected.id,s);setSelected(r=>({...r,status:s}));}}
-                      style={{ padding:"6px 14px", borderRadius:8, fontSize:12, fontWeight:500, cursor:"pointer", border:selected.status===s?"none":"1px solid #e5e7eb", background:selected.status===s?STATUS[s].bg:"#f9fafb", color:selected.status===s?STATUS[s].color:"#6b7280" }}>{s}</button>
+                <SL>Move To</SL>
+                <div style={{display:"flex",gap:8}}>
+                  {Object.keys(STATUS).map((s) => (
+                    <button key={s} onClick={() => { onStatus(selected.id, s); setSelected((r) => Object.assign({},r,{status:s})); }}
+                      style={{padding:"6px 14px",borderRadius:8,fontSize:12,fontWeight:500,cursor:"pointer",border:selected.status===s?"none":"1px solid #e5e7eb",background:selected.status===s?STATUS[s].bg:"#f9fafb",color:selected.status===s?STATUS[s].color:"#6b7280"}}>{s}</button>
                   ))}
                 </div>
               </div>
-              <p style={{ fontSize:11, color:"#9ca3af" }}>Submitted {new Date(selected.createdAt).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
+              <p style={{fontSize:11,color:"#9ca3af"}}>Submitted {new Date(selected.createdAt).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
             </div>
           </div>
         </div>
@@ -419,80 +509,74 @@ const Dashboard = ({ reqs, onImport, onNavigate, onStatus }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // IMPORT
 // ─────────────────────────────────────────────────────────────────────────────
-const FIELD_LABELS = {
-  title:"Title", description:"Description", client:"Client", product:"Product",
-  productArea:"Product Area", engagementFormat:"Engagement Format",
-  priority:"Priority", status:"Status", submittedBy:"Submitted By", date:"Date", tags:"Tags"
-};
+const FIELD_LABELS = {title:"Title",description:"Description",client:"Client",product:"Product",productArea:"Product Area",engagementFormat:"Engagement Format",priority:"Priority",status:"Status",submittedBy:"Submitted By",date:"Date",tags:"Tags"};
 
-const ImportView = ({ onImport, onDone }) => {
+const ImportView = ({onImport, onDone}) => {
   const [step, setStep] = useState("upload");
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(false);
-
-  const handleFile = async e => {
+  const handleFile = async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    try { const buf=await f.arrayBuffer(); setPreview(parseXLSX(new Uint8Array(buf))); setStep("preview"); }
-    catch(e) { setError("Could not read file: "+e.message); }
+    try { const buf = await f.arrayBuffer(); setPreview(parseXLSX(new Uint8Array(buf))); setStep("preview"); }
+    catch(err) { setError("Could not read file: " + err.message); }
   };
-  const confirm = () => { setImporting(true); onImport(preview.rows); setTimeout(()=>onDone(),1200); };
-  const updateMapping = (field, col) => setPreview(p => {
-    const colMap = {...p.colMap,[field]:col||undefined};
-    return {...p, colMap, rows:parseXLSX.remap(p.rawRows,p.headers,colMap)};
+  const confirm = () => { setImporting(true); onImport(preview.rows); setTimeout(() => onDone(), 1200); };
+  const updateMapping = (field, col) => setPreview((p) => {
+    const colMap = Object.assign({}, p.colMap, {[field]: col || undefined});
+    return Object.assign({}, p, {colMap: colMap, rows: parseXLSX.remap(p.rawRows, p.headers, colMap)});
   });
 
-  if (step==="preview"&&preview) {
-    const unmapped = preview.headers.filter(h=>!Object.values(preview.colMap).includes(h));
+  if (step === "preview" && preview) {
+    const unmapped = preview.headers.filter((h) => Object.values(preview.colMap).indexOf(h) === -1);
     return (
-      <div style={{ maxWidth:820, margin:"0 auto", display:"flex", flexDirection:"column", gap:20 }}>
+      <div style={{maxWidth:820,margin:"0 auto",display:"flex",flexDirection:"column",gap:20}}>
         <Card>
-          <h2 style={{ fontSize:17, fontWeight:700, color:"#111827", marginBottom:4 }}>Import Preview</h2>
-          <p style={{ fontSize:13, color:"#6b7280", marginBottom:20 }}>Found <strong>{preview.rows.length} records</strong>. Verify the column mapping then import.</p>
-          <div style={{ background:"#f8fafc", borderRadius:12, padding:16, marginBottom:20 }}>
-            <SectionLabel>Column Mapping — adjust any that look wrong</SectionLabel>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:10 }}>
-              {Object.keys(FIELD_LABELS).map(field=>(
-                <div key={field} style={{ display:"flex", alignItems:"center", gap:8, background:"#fff", borderRadius:8, padding:"6px 10px", border:"1px solid #e2e8f0", fontSize:12 }}>
-                  <span style={{ fontWeight:600, color:"#4f46e5", width:130, flexShrink:0 }}>{FIELD_LABELS[field]}</span>
-                  <span style={{ color:"#94a3b8" }}>←</span>
-                  <select value={preview.colMap[field]||""} onChange={e=>updateMapping(field,e.target.value)}
-                    style={{ flex:1, fontSize:11, border:"none", background:"transparent", color:"#475569", cursor:"pointer" }}>
+          <h2 style={{fontSize:17,fontWeight:700,color:"#111827",marginBottom:4}}>Import Preview</h2>
+          <p style={{fontSize:13,color:"#6b7280",marginBottom:20}}>Found <strong>{preview.rows.length} records</strong>. Verify the column mapping then import.</p>
+          <div style={{background:"#f8fafc",borderRadius:12,padding:16,marginBottom:20}}>
+            <SL>Column Mapping — adjust any that look wrong</SL>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+              {Object.keys(FIELD_LABELS).map((field) => (
+                <div key={field} style={{display:"flex",alignItems:"center",gap:8,background:"#fff",borderRadius:8,padding:"6px 10px",border:"1px solid #e2e8f0",fontSize:12}}>
+                  <span style={{fontWeight:600,color:"#4f46e5",width:130,flexShrink:0}}>{FIELD_LABELS[field]}</span>
+                  <span style={{color:"#94a3b8"}}>←</span>
+                  <select value={preview.colMap[field]||""} onChange={(e) => updateMapping(field, e.target.value)} style={{flex:1,fontSize:11,border:"none",background:"transparent",color:"#475569",cursor:"pointer"}}>
                     <option value="">(unmapped)</option>
-                    {preview.headers.map(h=><option key={h} value={h}>{h}</option>)}
+                    {preview.headers.map((h) => <option key={h} value={h}>{h}</option>)}
                   </select>
                 </div>
               ))}
             </div>
-            {unmapped.length>0&&<p style={{ fontSize:11, color:"#94a3b8" }}><strong>{unmapped.length} unmapped</strong> stored as tags: {unmapped.join(", ")}</p>}
+            {unmapped.length > 0 && <p style={{fontSize:11,color:"#94a3b8"}}><strong>{unmapped.length} unmapped</strong> stored as tags: {unmapped.join(", ")}</p>}
           </div>
-          <div style={{ borderRadius:10, border:"1px solid #e5e7eb", overflow:"hidden", marginBottom:20 }}>
-            <div style={{ overflowX:"auto", maxHeight:280 }}>
-              <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
-                <thead style={{ background:"#f9fafb", position:"sticky", top:0 }}>
-                  <tr>{["Title","Client","Product","Product Area","Engagement Format","Status","Priority"].map(h=>(
-                    <th key={h} style={{ textAlign:"left", padding:"8px 12px", fontWeight:600, color:"#6b7280", borderBottom:"1px solid #e5e7eb", whiteSpace:"nowrap" }}>{h}</th>
+          <div style={{borderRadius:10,border:"1px solid #e5e7eb",overflow:"hidden",marginBottom:20}}>
+            <div style={{overflowX:"auto",maxHeight:280}}>
+              <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+                <thead style={{background:"#f9fafb",position:"sticky",top:0}}>
+                  <tr>{["Title","Client(s)","Product","Product Area","Engagement Format","Status","Priority"].map((h) => (
+                    <th key={h} style={{textAlign:"left",padding:"8px 12px",fontWeight:600,color:"#6b7280",borderBottom:"1px solid #e5e7eb",whiteSpace:"nowrap"}}>{h}</th>
                   ))}</tr>
                 </thead>
                 <tbody>
-                  {preview.rows.slice(0,15).map((r,i)=>(
-                    <tr key={i} style={{ borderTop:"1px solid #f3f4f6" }}>
-                      <td style={{ padding:"7px 12px", fontWeight:500, color:"#1f2937", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.title}</td>
-                      <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.client||"—"}</td>
-                      <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.product||"—"}</td>
-                      <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.productArea||"—"}</td>
-                      <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.engagementFormat||"—"}</td>
-                      <td style={{ padding:"7px 12px" }}><StatusPill status={r.status}/></td>
-                      <td style={{ padding:"7px 12px" }}><PriBadge p={r.priority}/></td>
+                  {preview.rows.slice(0,15).map((r,i) => (
+                    <tr key={i} style={{borderTop:"1px solid #f3f4f6"}}>
+                      <td style={{padding:"7px 12px",fontWeight:500,color:"#1f2937",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</td>
+                      <td style={{padding:"7px 12px",color:"#6b7280",whiteSpace:"nowrap"}}>{(r.client||[]).join(", ")||"—"}</td>
+                      <td style={{padding:"7px 12px",color:"#6b7280",whiteSpace:"nowrap"}}>{r.product||"—"}</td>
+                      <td style={{padding:"7px 12px",color:"#6b7280",whiteSpace:"nowrap"}}>{r.productArea||"—"}</td>
+                      <td style={{padding:"7px 12px",color:"#6b7280",whiteSpace:"nowrap"}}>{r.engagementFormat||"—"}</td>
+                      <td style={{padding:"7px 12px"}}><StatusPill status={r.status}/></td>
+                      <td style={{padding:"7px 12px"}}><PriBadge p={r.priority}/></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {preview.rows.length>15&&<p style={{ textAlign:"center", fontSize:11, color:"#9ca3af", padding:"8px 0", background:"#f9fafb", borderTop:"1px solid #f3f4f6" }}>…and {preview.rows.length-15} more records</p>}
+            {preview.rows.length > 15 && <p style={{textAlign:"center",fontSize:11,color:"#9ca3af",padding:"8px 0",background:"#f9fafb",borderTop:"1px solid #f3f4f6"}}>…and {preview.rows.length-15} more records</p>}
           </div>
-          <Btn onClick={confirm} disabled={importing} style={{ width:"100%", padding:"12px 0", background:importing?"#a5b4fc":"#4f46e5", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            {importing?<><span className="spin"><SVG d={IC.spin} size={15} color="#fff"/></span>Importing…</>:`Import All ${preview.rows.length} Records`}
+          <Btn onClick={confirm} disabled={importing} style={{width:"100%",padding:"12px 0",background:importing?"#a5b4fc":"#4f46e5",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            {importing ? <span><span className="spin"><SVG d={IC.spin} size={15} color="#fff"/></span> Importing…</span> : "Import All " + preview.rows.length + " Records"}
           </Btn>
         </Card>
       </div>
@@ -500,95 +584,97 @@ const ImportView = ({ onImport, onDone }) => {
   }
 
   return (
-    <div style={{ maxWidth:460, margin:"0 auto" }}>
-      <Card style={{ textAlign:"center", padding:40 }}>
-        <SVG d={IC.file} size={40} color="#d1d5db" style={{ marginBottom:16 }}/>
-        <h2 style={{ fontSize:17, fontWeight:700, color:"#111827", marginBottom:6 }}>Import Excel File</h2>
-        <p style={{ fontSize:13, color:"#6b7280", marginBottom:24 }}>Upload your FER spreadsheet to load all records.</p>
-        <label style={{ display:"inline-block", padding:"10px 24px", background:"#4f46e5", color:"#fff", fontSize:13, fontWeight:600, borderRadius:10, cursor:"pointer" }}>
+    <div style={{maxWidth:460,margin:"0 auto"}}>
+      <Card style={{textAlign:"center",padding:40}}>
+        <SVG d={IC.file} size={40} color="#d1d5db" style={{marginBottom:16}}/>
+        <h2 style={{fontSize:17,fontWeight:700,color:"#111827",marginBottom:6}}>Import Excel File</h2>
+        <p style={{fontSize:13,color:"#6b7280",marginBottom:24}}>Upload your FER spreadsheet to load all records.</p>
+        <label style={{display:"inline-block",padding:"10px 24px",background:"#4f46e5",color:"#fff",fontSize:13,fontWeight:600,borderRadius:10,cursor:"pointer"}}>
           Choose File (.xlsx / .xls / .csv)
-          <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} style={{ display:"none" }}/>
+          <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} style={{display:"none"}}/>
         </label>
-        {error&&<p style={{ fontSize:13, color:"#dc2626", marginTop:16 }}>{error}</p>}
+        {error && <p style={{fontSize:13,color:"#dc2626",marginTop:16}}>{error}</p>}
       </Card>
     </div>
   );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CLASSIFICATION FIELDS — shared between Submit and Edit
+// FORM BODY (shared by Submit and Edit)
 // ─────────────────────────────────────────────────────────────────────────────
-const ClassificationFields = ({ f, set, lists, prefix="" }) => (
-  <div>
-    <SectionLabel>Classifications</SectionLabel>
-    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-      <ClassField label="Product *" value={f.product} onChange={v=>set("product",v)} listId={`${prefix}pl`} options={lists.products}/>
-      <ClassField label="Product Area" value={f.productArea} onChange={v=>set("productArea",v)} listId={`${prefix}al`} options={lists.productAreas}/>
+const FormBody = ({f, set, lists, pfx, tagInput, setTagInput, addTag}) => (
+  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div>
+      <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Submitted By *</label>
+      <input list={pfx+"tm"} value={f.submittedBy} onChange={(e) => set("submittedBy",e.target.value)} placeholder="Name or select" style={IS}/>
+      <datalist id={pfx+"tm"}>{(lists.teamMembers||[]).map((v) => <option key={v} value={v}/>)}</datalist>
     </div>
-    <ClassField label="Engagement Format" value={f.engagementFormat} onChange={v=>set("engagementFormat",v)} listId={`${prefix}ef`} options={lists.engagementFormats}/>
+    <MultiSelectField label="Client(s)" values={f.client||[]} onChange={(v) => set("client",v)} listId={pfx+"cl"} options={lists.clients||[]}/>
+    <div>
+      <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Request Title *</label>
+      <input value={f.title} onChange={(e) => set("title",e.target.value)} placeholder="Brief, descriptive title" style={IS}/>
+    </div>
+    <ClassFields f={f} set={set} lists={lists} pfx={pfx}/>
+    <div>
+      <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Priority</label>
+      <div style={{display:"flex",gap:8}}>
+        {["Low","Medium","High"].map((p) => (
+          <button key={p} onClick={() => set("priority",p)} style={{padding:"6px 18px",borderRadius:8,fontSize:13,fontWeight:500,border:"1px solid "+(f.priority===p?PRI[p].border:"#e5e7eb"),background:f.priority===p?PRI[p].bg:"#fff",color:f.priority===p?PRI[p].color:"#6b7280"}}>{p}</button>
+        ))}
+      </div>
+    </div>
+    <div>
+      <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Description *</label>
+      <textarea value={f.description} onChange={(e) => set("description",e.target.value)} rows={4} placeholder="Describe the request — use case, problem it solves, expected behavior." style={Object.assign({},IS,{resize:"none"})}/>
+    </div>
+    <div>
+      <label style={{fontSize:13,fontWeight:500,color:"#374151",display:"block",marginBottom:6}}>Tags</label>
+      <div style={{display:"flex",gap:8}}>
+        <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => { if (e.key==="Enter") { e.preventDefault(); addTag(); } }} placeholder="Type a tag and press Enter" style={Object.assign({},IS,{flex:1})}/>
+        <Btn onClick={addTag} style={{background:"#f3f4f6",color:"#374151",border:"1px solid #e5e7eb"}}>Add</Btn>
+      </div>
+      {f.tags && f.tags.length > 0 && (
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
+          {f.tags.map((t,i) => (
+            <span key={i} style={{display:"flex",alignItems:"center",gap:4,padding:"3px 10px",background:"#eef2ff",color:"#4f46e5",borderRadius:999,fontSize:12,fontWeight:500}}>
+              {t}
+              <button onClick={() => set("tags",f.tags.filter((_,j) => j!==i))} style={{background:"none",border:"none",cursor:"pointer",color:"#4f46e5",lineHeight:1,padding:0}}><SVG d={IC.x} size={11}/></button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   </div>
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SUBMIT FORM
 // ─────────────────────────────────────────────────────────────────────────────
-const SubmitForm = ({ onSubmit, onDone, lists }) => {
-  const blank = { title:"",description:"",submittedBy:"",isClient:false,client:"",product:"",productArea:"",engagementFormat:"",priority:"Medium",tags:[] };
-  const [f,setF] = useState(blank);
-  const [tag,setTag] = useState("");
-  const [done,setDone] = useState(false);
-  const set = (k,v) => setF(p=>({...p,[k]:v}));
-  const addTag = () => { const t=tag.trim(); if(t&&!f.tags.includes(t)) set("tags",[...f.tags,t]); setTag(""); };
-  const valid = f.title&&f.submittedBy&&f.product&&f.description&&(!f.isClient||f.client);
-  const submit = () => { if(!valid) return; onSubmit(f); setF(blank); setTag(""); setDone(true); setTimeout(()=>{setDone(false);onDone();},1400); };
-
+const SubmitForm = ({onSubmit, onDone, lists}) => {
+  const blank = {title:"",description:"",submittedBy:"",client:[],product:"",productArea:"",engagementFormat:"",priority:"Medium",tags:[]};
+  const [f, setF] = useState(blank);
+  const [tag, setTag] = useState("");
+  const [done, setDone] = useState(false);
+  const set = (k,v) => setF((p) => Object.assign({},p,{[k]:v}));
+  const addTag = () => { const t = tag.trim(); if (t && f.tags.indexOf(t)===-1) set("tags",f.tags.concat([t])); setTag(""); };
+  const valid = f.title && f.submittedBy && f.product && f.description;
+  const submit = () => {
+    if (!valid) return;
+    onSubmit(f); setF(blank); setTag(""); setDone(true);
+    setTimeout(() => { setDone(false); onDone(); }, 1400);
+  };
   if (done) return (
-    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:80, gap:16 }}>
-      <div style={{ width:56, height:56, background:"#d1fae5", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center" }}><SVG d={IC.check} size={28} color="#065f46"/></div>
-      <p style={{ fontSize:17, fontWeight:600, color:"#1f2937" }}>Request Submitted!</p>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:80,gap:16}}>
+      <div style={{width:56,height:56,background:"#d1fae5",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center"}}><SVG d={IC.check} size={28} color="#065f46"/></div>
+      <p style={{fontSize:17,fontWeight:600,color:"#1f2937"}}>Request Submitted!</p>
     </div>
   );
-
   return (
-    <div style={{ maxWidth:560, margin:"0 auto" }}>
-      <Card style={{ padding:32, display:"flex", flexDirection:"column", gap:18 }}>
-        <h2 style={{ fontSize:18, fontWeight:700, color:"#111827" }}>Submit Feature Request</h2>
-        <div>
-          <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Submitted By *</label>
-          <input list="tm" value={f.submittedBy} onChange={e=>set("submittedBy",e.target.value)} placeholder="Name or select" style={InputStyle}/>
-          <datalist id="tm">{lists.teamMembers.map(v=><option key={v} value={v}/>)}</datalist>
-        </div>
-        <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", userSelect:"none" }}>
-          <div onClick={()=>set("isClient",!f.isClient)} style={{ width:40, height:24, borderRadius:999, padding:"0 4px", background:f.isClient?"#4f46e5":"#d1d5db", display:"flex", alignItems:"center", transition:"background 0.2s" }}>
-            <div style={{ width:16, height:16, borderRadius:"50%", background:"#fff", boxShadow:"0 1px 3px rgba(0,0,0,0.2)", transform:f.isClient?"translateX(16px)":"none", transition:"transform 0.2s" }}/>
-          </div>
-          <span style={{ fontSize:13, fontWeight:500, color:"#374151" }}>On behalf of a client</span>
-        </label>
-        {f.isClient&&<div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Client Name *</label><input value={f.client} onChange={e=>set("client",e.target.value)} placeholder="e.g. Acme Corp" style={InputStyle}/></div>}
-        <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Request Title *</label><input value={f.title} onChange={e=>set("title",e.target.value)} placeholder="Brief, descriptive title" style={InputStyle}/></div>
-        <ClassificationFields f={f} set={set} lists={lists} prefix="s-"/>
-        <div>
-          <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Priority</label>
-          <div style={{ display:"flex", gap:8 }}>
-            {["Low","Medium","High"].map(p=>(
-              <button key={p} onClick={()=>set("priority",p)} style={{ padding:"6px 18px", borderRadius:8, fontSize:13, fontWeight:500, border:`1px solid ${f.priority===p?PRI[p].border:"#e5e7eb"}`, background:f.priority===p?PRI[p].bg:"#fff", color:f.priority===p?PRI[p].color:"#6b7280" }}>{p}</button>
-            ))}
-          </div>
-        </div>
-        <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Description *</label><textarea value={f.description} onChange={e=>set("description",e.target.value)} rows={4} placeholder="Describe the request — use case, problem it solves, expected behavior." style={{...InputStyle,resize:"none"}}/></div>
-        <div>
-          <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Tags</label>
-          <div style={{ display:"flex", gap:8 }}>
-            <input value={tag} onChange={e=>setTag(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTag();}}} placeholder="Type a tag and press Enter" style={{...InputStyle,flex:1}}/>
-            <Btn onClick={addTag} style={{ background:"#f3f4f6", color:"#374151", border:"1px solid #e5e7eb" }}>Add</Btn>
-          </div>
-          {f.tags.length>0&&<div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:8 }}>{f.tags.map(t=>(
-            <span key={t} style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 10px", background:"#eef2ff", color:"#4f46e5", borderRadius:999, fontSize:12, fontWeight:500 }}>
-              {t}<button onClick={()=>set("tags",f.tags.filter(x=>x!==t))} style={{ background:"none", border:"none", cursor:"pointer", color:"#4f46e5", lineHeight:1, padding:0 }}><SVG d={IC.x} size={11}/></button>
-            </span>
-          ))}</div>}
-        </div>
-        <Btn onClick={submit} disabled={!valid} style={{ width:"100%", padding:"12px 0", background:valid?"#4f46e5":"#f3f4f6", color:valid?"#fff":"#9ca3af", cursor:valid?"pointer":"not-allowed" }}>Submit Feature Request</Btn>
+    <div style={{maxWidth:560,margin:"0 auto"}}>
+      <Card style={{padding:32}}>
+        <h2 style={{fontSize:18,fontWeight:700,color:"#111827",marginBottom:20}}>Submit Feature Request</h2>
+        <FormBody f={f} set={set} lists={lists} pfx="s-" tagInput={tag} setTagInput={setTag} addTag={addTag}/>
+        <Btn onClick={submit} disabled={!valid} style={{width:"100%",padding:"12px 0",marginTop:20,background:valid?"#4f46e5":"#f3f4f6",color:valid?"#fff":"#9ca3af",cursor:valid?"pointer":"not-allowed"}}>Submit Feature Request</Btn>
       </Card>
     </div>
   );
@@ -597,59 +683,24 @@ const SubmitForm = ({ onSubmit, onDone, lists }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // EDIT MODAL
 // ─────────────────────────────────────────────────────────────────────────────
-const EditModal = ({ request, lists, onSave, onClose }) => {
-  const [f,setF] = useState({...request});
-  const [tag,setTag] = useState("");
-  const set = (k,v) => setF(p=>({...p,[k]:v}));
-  const addTag = () => { const t=tag.trim(); if(t&&!f.tags.includes(t)) set("tags",[...f.tags,t]); setTag(""); };
-  const valid = f.title&&f.submittedBy&&f.product&&f.description&&(!f.isClient||f.client);
-
+const EditModal = ({request, lists, onSave, onClose}) => {
+  const [f, setF] = useState(Object.assign({},request,{client:Array.isArray(request.client)?request.client:(request.client?[request.client]:[])}));
+  const [tag, setTag] = useState("");
+  const set = (k,v) => setF((p) => Object.assign({},p,{[k]:v}));
+  const addTag = () => { const t = tag.trim(); if (t && f.tags.indexOf(t)===-1) set("tags",f.tags.concat([t])); setTag(""); };
+  const valid = f.title && f.submittedBy && f.product && f.description;
   return (
-    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
-      <div onClick={e=>e.stopPropagation()} style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:560, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.2)" }}>
-        <div style={{ padding:"18px 24px", borderBottom:"1px solid #f3f4f6", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <h2 style={{ fontSize:16, fontWeight:700, color:"#111827" }}>Edit Request</h2>
-          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af" }}><SVG d={IC.x} size={18}/></button>
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div onClick={(e) => e.stopPropagation()} style={{background:"#fff",borderRadius:16,width:"100%",maxWidth:560,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"18px 24px",borderBottom:"1px solid #f3f4f6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <h2 style={{fontSize:16,fontWeight:700,color:"#111827"}}>Edit Request</h2>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#9ca3af"}}><SVG d={IC.x} size={18}/></button>
         </div>
-        <div style={{ padding:24, display:"flex", flexDirection:"column", gap:16 }}>
-          <div>
-            <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Submitted By *</label>
-            <input list="e-tm" value={f.submittedBy} onChange={e=>set("submittedBy",e.target.value)} style={InputStyle}/>
-            <datalist id="e-tm">{lists.teamMembers.map(v=><option key={v} value={v}/>)}</datalist>
-          </div>
-          <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", userSelect:"none" }}>
-            <div onClick={()=>set("isClient",!f.isClient)} style={{ width:40, height:24, borderRadius:999, padding:"0 4px", background:f.isClient?"#4f46e5":"#d1d5db", display:"flex", alignItems:"center", transition:"background 0.2s" }}>
-              <div style={{ width:16, height:16, borderRadius:"50%", background:"#fff", boxShadow:"0 1px 3px rgba(0,0,0,0.2)", transform:f.isClient?"translateX(16px)":"none", transition:"transform 0.2s" }}/>
-            </div>
-            <span style={{ fontSize:13, fontWeight:500, color:"#374151" }}>On behalf of a client</span>
-          </label>
-          {f.isClient&&<div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Client Name *</label><input value={f.client} onChange={e=>set("client",e.target.value)} placeholder="e.g. Acme Corp" style={InputStyle}/></div>}
-          <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Request Title *</label><input value={f.title} onChange={e=>set("title",e.target.value)} style={InputStyle}/></div>
-          <ClassificationFields f={f} set={set} lists={lists} prefix="e-"/>
-          <div>
-            <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Priority</label>
-            <div style={{ display:"flex", gap:8 }}>
-              {["Low","Medium","High"].map(p=>(
-                <button key={p} onClick={()=>set("priority",p)} style={{ padding:"6px 18px", borderRadius:8, fontSize:13, fontWeight:500, border:`1px solid ${f.priority===p?PRI[p].border:"#e5e7eb"}`, background:f.priority===p?PRI[p].bg:"#fff", color:f.priority===p?PRI[p].color:"#6b7280" }}>{p}</button>
-              ))}
-            </div>
-          </div>
-          <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Description *</label><textarea value={f.description} onChange={e=>set("description",e.target.value)} rows={4} style={{...InputStyle,resize:"none"}}/></div>
-          <div>
-            <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Tags</label>
-            <div style={{ display:"flex", gap:8 }}>
-              <input value={tag} onChange={e=>setTag(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTag();}}} placeholder="Type a tag and press Enter" style={{...InputStyle,flex:1}}/>
-              <Btn onClick={addTag} style={{ background:"#f3f4f6", color:"#374151", border:"1px solid #e5e7eb" }}>Add</Btn>
-            </div>
-            {f.tags?.length>0&&<div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:8 }}>{f.tags.map((t,i)=>(
-              <span key={i} style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 10px", background:"#eef2ff", color:"#4f46e5", borderRadius:999, fontSize:12, fontWeight:500 }}>
-                {t}<button onClick={()=>set("tags",f.tags.filter((_,j)=>j!==i))} style={{ background:"none", border:"none", cursor:"pointer", color:"#4f46e5", lineHeight:1, padding:0 }}><SVG d={IC.x} size={11}/></button>
-              </span>
-            ))}</div>}
-          </div>
-          <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-            <Btn onClick={onClose} style={{ flex:1, background:"#f3f4f6", color:"#374151", border:"1px solid #e5e7eb" }}>Cancel</Btn>
-            <Btn onClick={()=>valid&&onSave(f)} disabled={!valid} style={{ flex:2, background:valid?"#4f46e5":"#f3f4f6", color:valid?"#fff":"#9ca3af", cursor:valid?"pointer":"not-allowed" }}>Save Changes</Btn>
+        <div style={{padding:24}}>
+          <FormBody f={f} set={set} lists={lists} pfx="e-" tagInput={tag} setTagInput={setTag} addTag={addTag}/>
+          <div style={{display:"flex",gap:10,paddingTop:20}}>
+            <Btn onClick={onClose} style={{flex:1,background:"#f3f4f6",color:"#374151",border:"1px solid #e5e7eb"}}>Cancel</Btn>
+            <Btn onClick={() => valid && onSave(f)} disabled={!valid} style={{flex:2,background:valid?"#4f46e5":"#f3f4f6",color:valid?"#fff":"#9ca3af",cursor:valid?"pointer":"not-allowed"}}>Save Changes</Btn>
           </div>
         </div>
       </div>
@@ -660,74 +711,76 @@ const EditModal = ({ request, lists, onSave, onClose }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // BOARD
 // ─────────────────────────────────────────────────────────────────────────────
-const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onBack }) => {
-  const [fl,setFl] = useState({ status:"",product:"",area:"",engagementFormat:"",client:"",q:"", ...initialFilters });
-  const [exp,setExp] = useState(null);
-  const [editing,setEditing] = useState(null);
-  const sf = (k,v) => setFl(p=>({...p,[k]:v}));
-
-  const filtered = useMemo(()=>reqs.filter(r=>{
-    if(fl.status&&r.status!==fl.status) return false;
-    if(fl.product&&r.product!==fl.product) return false;
-    if(fl.area&&r.productArea!==fl.area) return false;
-    if(fl.engagementFormat&&r.engagementFormat!==fl.engagementFormat) return false;
-    if(fl.client&&!r.client?.toLowerCase().includes(fl.client.toLowerCase())) return false;
-    if(fl.q){const q=fl.q.toLowerCase();return r.title.toLowerCase().includes(q)||r.description?.toLowerCase().includes(q)||r.tags?.some(t=>t.toLowerCase().includes(q));}
+const Board = ({reqs, onStatus, onRemove, onEdit, lists, initialFilters, onBack}) => {
+  initialFilters = initialFilters || {};
+  const [fl, setFl] = useState(Object.assign({status:"",product:"",area:"",engagementFormat:"",client:"",q:""}, initialFilters));
+  const [exp, setExp] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const sf = (k,v) => setFl((p) => Object.assign({},p,{[k]:v}));
+  const filtered = useMemo(() => reqs.filter((r) => {
+    if (fl.status && r.status !== fl.status) return false;
+    if (fl.product && r.product !== fl.product) return false;
+    if (fl.area && r.productArea !== fl.area) return false;
+    if (fl.engagementFormat && r.engagementFormat !== fl.engagementFormat) return false;
+    if (fl.client && (r.client||[]).indexOf(fl.client) === -1) return false;
+    if (fl.q) { const q = fl.q.toLowerCase(); return r.title.toLowerCase().includes(q) || (r.description||"").toLowerCase().includes(q) || (r.tags||[]).some((t) => t.toLowerCase().includes(q)); }
     return true;
-  }),[reqs,fl]);
-
+  }), [reqs, fl]);
   const hasFilter = Object.values(fl).some(Boolean);
-  const selSt = { border:"1px solid #d1d5db", borderRadius:8, padding:"7px 10px", fontSize:12, background:"#fff", cursor:"pointer" };
-
+  const ss = {border:"1px solid #d1d5db",borderRadius:8,padding:"7px 10px",fontSize:12,background:"#fff",cursor:"pointer"};
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-      {onBack&&<button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", cursor:"pointer", fontSize:13, fontWeight:500, color:"#4f46e5", alignSelf:"flex-start" }}><SVG d={IC.back} size={15} color="#4f46e5"/> Back to Dashboard</button>}
-      <Card style={{ display:"flex", flexDirection:"column", gap:10 }}>
-        <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" }}>
-          <input value={fl.q} onChange={e=>sf("q",e.target.value)} placeholder="Search title, description, tags…" style={{...selSt,flex:1,minWidth:180}}/>
-          <select value={fl.status} onChange={e=>sf("status",e.target.value)} style={selSt}><option value="">Status: All</option>{Object.keys(STATUS).map(s=><option key={s}>{s}</option>)}</select>
-          <select value={fl.product} onChange={e=>sf("product",e.target.value)} style={selSt}><option value="">Product: All</option>{lists.products.map(p=><option key={p}>{p}</option>)}</select>
-          <select value={fl.area} onChange={e=>sf("area",e.target.value)} style={selSt}><option value="">Area: All</option>{lists.productAreas.map(a=><option key={a}>{a}</option>)}</select>
-          <select value={fl.engagementFormat} onChange={e=>sf("engagementFormat",e.target.value)} style={selSt}><option value="">Format: All</option>{lists.engagementFormats.map(e=><option key={e}>{e}</option>)}</select>
-          <input value={fl.client} onChange={e=>sf("client",e.target.value)} placeholder="Client…" style={{...selSt,width:110}}/>
-          {hasFilter&&<button onClick={()=>setFl({status:"",product:"",area:"",engagementFormat:"",client:"",q:""})} style={{ background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#9ca3af", display:"flex", alignItems:"center", gap:4 }}><SVG d={IC.x} size={12}/> Clear</button>}
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {onBack && (
+        <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",fontSize:13,fontWeight:500,color:"#4f46e5",alignSelf:"flex-start"}}>
+          <SVG d={IC.back} size={15} color="#4f46e5"/> Back to Dashboard
+        </button>
+      )}
+      <Card style={{display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+          <input value={fl.q} onChange={(e) => sf("q",e.target.value)} placeholder="Search title, description, tags…" style={Object.assign({},ss,{flex:1,minWidth:180})}/>
+          <select value={fl.status} onChange={(e) => sf("status",e.target.value)} style={ss}><option value="">Status: All</option>{Object.keys(STATUS).map((s) => <option key={s}>{s}</option>)}</select>
+          <select value={fl.product} onChange={(e) => sf("product",e.target.value)} style={ss}><option value="">Product: All</option>{(lists.products||[]).map((p) => <option key={p}>{p}</option>)}</select>
+          <select value={fl.area} onChange={(e) => sf("area",e.target.value)} style={ss}><option value="">Area: All</option>{(lists.productAreas||[]).map((a) => <option key={a}>{a}</option>)}</select>
+          <select value={fl.engagementFormat} onChange={(e) => sf("engagementFormat",e.target.value)} style={ss}><option value="">Format: All</option>{(lists.engagementFormats||[]).map((e) => <option key={e}>{e}</option>)}</select>
+          <select value={fl.client} onChange={(e) => sf("client",e.target.value)} style={ss}><option value="">Client: All</option>{(lists.clients||[]).map((c) => <option key={c}>{c}</option>)}</select>
+          {hasFilter && <button onClick={() => setFl({status:"",product:"",area:"",engagementFormat:"",client:"",q:""})} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:"#9ca3af",display:"flex",alignItems:"center",gap:4}}><SVG d={IC.x} size={12}/> Clear</button>}
         </div>
-        <p style={{ fontSize:11, color:"#9ca3af" }}>{filtered.length} of {reqs.length} requests</p>
+        <p style={{fontSize:11,color:"#9ca3af"}}>{filtered.length} of {reqs.length} requests</p>
       </Card>
-      {filtered.length===0
-        ?<div style={{ textAlign:"center", padding:60, color:"#9ca3af" }}>No requests match your filters</div>
-        :filtered.map(r=>(
-          <div key={r.id} style={{ background:"#fff", borderRadius:12, border:"1px solid #e5e7eb", overflow:"hidden" }}>
-            <div onClick={()=>setExp(exp===r.id?null:r.id)} style={{ padding:16, cursor:"pointer", display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
-              <div style={{ minWidth:0, flex:1 }}>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}>
+      {filtered.length === 0
+        ? <div style={{textAlign:"center",padding:60,color:"#9ca3af"}}>No requests match your filters</div>
+        : filtered.map((r) => (
+          <div key={r.id} style={{background:"#fff",borderRadius:12,border:"1px solid #e5e7eb",overflow:"hidden"}}>
+            <div onClick={() => setExp(exp===r.id?null:r.id)} style={{padding:16,cursor:"pointer",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
+              <div style={{minWidth:0,flex:1}}>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
                   <StatusPill status={r.status}/>
                   <PriBadge p={r.priority}/>
-                  {r.product&&<span style={{ fontSize:11, background:"#eef2ff", color:"#4f46e5", padding:"2px 8px", borderRadius:999, fontWeight:500 }}>{r.product}</span>}
-                  {r.productArea&&<span style={{ fontSize:11, background:"#ede9fe", color:"#6d28d9", padding:"2px 8px", borderRadius:999, fontWeight:500 }}>{r.productArea}</span>}
-                  {r.engagementFormat&&<span style={{ fontSize:11, background:"#fdf4ff", color:"#a21caf", padding:"2px 8px", borderRadius:999, fontWeight:500 }}>{r.engagementFormat}</span>}
-                  {r.client&&<span style={{ fontSize:11, background:"#f5f3ff", color:"#7c3aed", padding:"2px 8px", borderRadius:999 }}>{r.client}</span>}
+                  {r.product && <span style={{fontSize:11,background:"#eef2ff",color:"#4f46e5",padding:"2px 8px",borderRadius:999,fontWeight:500}}>{r.product}</span>}
+                  {r.productArea && <span style={{fontSize:11,background:"#ede9fe",color:"#6d28d9",padding:"2px 8px",borderRadius:999,fontWeight:500}}>{r.productArea}</span>}
+                  {r.engagementFormat && <span style={{fontSize:11,background:"#fdf4ff",color:"#a21caf",padding:"2px 8px",borderRadius:999,fontWeight:500}}>{r.engagementFormat}</span>}
+                  {(r.client||[]).map((c,i) => <span key={i} style={{fontSize:11,background:"#f5f3ff",color:"#7c3aed",padding:"2px 8px",borderRadius:999}}>{c}</span>)}
                 </div>
-                <p style={{ fontSize:14, fontWeight:500, color:"#111827" }}>{r.title}</p>
+                <p style={{fontSize:14,fontWeight:500,color:"#111827"}}>{r.title}</p>
               </div>
-              <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
-                <span style={{ fontSize:11, color:"#9ca3af" }}>{new Date(r.createdAt).toLocaleDateString()}</span>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                <span style={{fontSize:11,color:"#9ca3af"}}>{new Date(r.createdAt).toLocaleDateString()}</span>
                 <SVG d={exp===r.id?IC.chevU:IC.chevD} size={14} color="#9ca3af"/>
               </div>
             </div>
-            {exp===r.id&&(
-              <div style={{ padding:"0 16px 16px", borderTop:"1px solid #f3f4f6", paddingTop:12, display:"flex", flexDirection:"column", gap:10 }}>
-                {r.description&&<p style={{ fontSize:13, color:"#374151" }}>{r.description}</p>}
-                {r.tags?.length>0&&<div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>{r.tags.map((t,i)=><Tag key={i}>{t}</Tag>)}</div>}
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
-                  <p style={{ fontSize:11, color:"#9ca3af" }}>{r.submittedBy&&<>By <strong style={{ color:"#6b7280" }}>{r.submittedBy}</strong></>}</p>
-                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                    <span style={{ fontSize:11, color:"#9ca3af" }}>Move to:</span>
-                    {Object.keys(STATUS).map(s=>(
-                      <button key={s} onClick={()=>onStatus(r.id,s)} style={{ padding:"5px 10px", borderRadius:8, fontSize:11, fontWeight:500, cursor:"pointer", border:r.status===s?"none":"1px solid #e5e7eb", background:r.status===s?STATUS[s].bg:"#f3f4f6", color:r.status===s?STATUS[s].color:"#6b7280" }}>{s}</button>
+            {exp === r.id && (
+              <div style={{padding:"0 16px 16px",borderTop:"1px solid #f3f4f6",paddingTop:12,display:"flex",flexDirection:"column",gap:10}}>
+                {r.description && <p style={{fontSize:13,color:"#374151"}}>{r.description}</p>}
+                {r.tags && r.tags.length > 0 && <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{r.tags.map((t,i) => <Tag key={i}>{t}</Tag>)}</div>}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+                  <p style={{fontSize:11,color:"#9ca3af"}}>{r.submittedBy && <span>By <strong style={{color:"#6b7280"}}>{r.submittedBy}</strong></span>}</p>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <span style={{fontSize:11,color:"#9ca3af"}}>Move to:</span>
+                    {Object.keys(STATUS).map((s) => (
+                      <button key={s} onClick={() => onStatus(r.id,s)} style={{padding:"5px 10px",borderRadius:8,fontSize:11,fontWeight:500,cursor:"pointer",border:r.status===s?"none":"1px solid #e5e7eb",background:r.status===s?STATUS[s].bg:"#f3f4f6",color:r.status===s?STATUS[s].color:"#6b7280"}}>{s}</button>
                     ))}
-                    <button onClick={()=>setEditing(r)} style={{ padding:"5px 10px", borderRadius:8, fontSize:11, fontWeight:500, cursor:"pointer", background:"#eff6ff", color:"#2563eb", border:"1px solid #bfdbfe" }}>Edit</button>
-                    <button onClick={()=>onRemove(r.id)} style={{ padding:"5px 10px", borderRadius:8, fontSize:11, fontWeight:500, cursor:"pointer", background:"#fef2f2", color:"#dc2626", border:"1px solid #fecaca" }}>Remove</button>
+                    <button onClick={() => setEditing(r)} style={{padding:"5px 10px",borderRadius:8,fontSize:11,fontWeight:500,cursor:"pointer",background:"#eff6ff",color:"#2563eb",border:"1px solid #bfdbfe"}}>Edit</button>
+                    <button onClick={() => onRemove(r.id)} style={{padding:"5px 10px",borderRadius:8,fontSize:11,fontWeight:500,cursor:"pointer",background:"#fef2f2",color:"#dc2626",border:"1px solid #fecaca"}}>Remove</button>
                   </div>
                 </div>
               </div>
@@ -735,7 +788,7 @@ const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onB
           </div>
         ))
       }
-      {editing&&<EditModal request={editing} lists={lists} onSave={updated=>{onEdit(updated);setEditing(null);setExp(null);}} onClose={()=>setEditing(null)}/>}
+      {editing && <EditModal request={editing} lists={lists} onSave={(updated) => { onEdit(updated); setEditing(null); setExp(null); }} onClose={() => setEditing(null)}/>}
     </div>
   );
 };
@@ -743,41 +796,43 @@ const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onB
 // ─────────────────────────────────────────────────────────────────────────────
 // AI INSIGHTS
 // ─────────────────────────────────────────────────────────────────────────────
-const AIQuery = ({ reqs }) => {
-  const [q,setQ]=useState(""); const [loading,setLoading]=useState(false);
-  const [res,setRes]=useState(null); const [asked,setAsked]=useState(""); const [err,setErr]=useState(null);
-  const suggestions=["What are the most common feature requests?","Which clients have the most pending requests?","Are there similar or duplicate requests?","What product areas need the most attention?","Break down requests by Engagement Format","List all high priority backlog items"];
-  const ask = async qry => {
-    if(!qry.trim()||loading) return;
-    if(!ANTH_KEY){setErr("Add your Anthropic API key to ANTH_KEY in the file to enable AI Insights.");return;}
-    setLoading(true);setRes(null);setErr(null);setAsked(qry);
-    const ctx=JSON.stringify(reqs.map(r=>({title:r.title,description:r.description,product:r.product,productArea:r.productArea,engagementFormat:r.engagementFormat,client:r.client||"Internal",tags:r.tags,priority:r.priority,status:r.status,submittedBy:r.submittedBy,date:r.createdAt?.split("T")[0]})));
+const AIQuery = ({reqs}) => {
+  const [q, setQ] = useState(""); const [loading, setLoading] = useState(false);
+  const [res, setRes] = useState(null); const [asked, setAsked] = useState(""); const [err, setErr] = useState(null);
+  const suggestions = ["What are the most common feature requests?","Which clients have the most pending requests?","Are there similar or duplicate requests?","What product areas need the most attention?","Break down requests by Engagement Format","List all high priority backlog items"];
+  const ask = async (qry) => {
+    if (!qry.trim() || loading) return;
+    if (!ANTH_KEY) { setErr("Add your Anthropic API key to ANTH_KEY in the file to enable AI Insights."); return; }
+    setLoading(true); setRes(null); setErr(null); setAsked(qry);
+    const ctx = JSON.stringify(reqs.map((r) => ({title:r.title,description:r.description,product:r.product,productArea:r.productArea,engagementFormat:r.engagementFormat,client:r.client,tags:r.tags,priority:r.priority,status:r.status,submittedBy:r.submittedBy,date:r.createdAt?r.createdAt.split("T")[0]:""})));
     try {
-      const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTH_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:"You are a product analytics assistant. Analyze the feature request database and answer insightfully using markdown. Be specific with counts, examples, and patterns.",messages:[{role:"user",content:`Feature requests:\n${ctx}\n\nQuestion: ${qry}`}]})});
-      const data=await resp.json();
-      setRes(data.content?.find(b=>b.type==="text")?.text||"No response.");
-    } catch(e){setErr("Request failed: "+e.message);}
+      const resp = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTH_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:"You are a product analytics assistant. Analyze the feature request database and answer insightfully using markdown. Be specific with counts, examples, and patterns.",messages:[{role:"user",content:"Feature requests:\n"+ctx+"\n\nQuestion: "+qry}]})});
+      const data = await resp.json();
+      setRes(data.content && data.content.find((b) => b.type==="text") ? data.content.find((b) => b.type==="text").text : "No response.");
+    } catch(e) { setErr("Request failed: " + e.message); }
     setLoading(false);
   };
   return (
-    <div style={{ maxWidth:700, margin:"0 auto", display:"flex", flexDirection:"column", gap:16 }}>
+    <div style={{maxWidth:700,margin:"0 auto",display:"flex",flexDirection:"column",gap:16}}>
       <Card>
-        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
-          <div style={{ width:24, height:24, background:"#7c3aed", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center" }}><SVG d={IC.spark} size={14} color="#fff"/></div>
-          <h2 style={{ fontSize:15, fontWeight:600, color:"#111827" }}>AI Insights</h2>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <div style={{width:24,height:24,background:"#7c3aed",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center"}}><SVG d={IC.spark} size={14} color="#fff"/></div>
+          <h2 style={{fontSize:15,fontWeight:600,color:"#111827"}}>AI Insights</h2>
         </div>
-        <p style={{ fontSize:13, color:"#6b7280", marginBottom:14 }}>Ask anything about your {reqs.length} requests — trends, patterns, duplicates, or breakdowns.</p>
-        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
-          <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")ask(q);}} placeholder="e.g. What are the top trends in the backlog?" style={{...InputStyle,flex:1}}/>
-          <Btn onClick={()=>ask(q)} disabled={!q.trim()||loading} style={{ background:q.trim()&&!loading?"#7c3aed":"#f3f4f6", color:q.trim()&&!loading?"#fff":"#9ca3af", display:"flex", alignItems:"center", gap:6 }}>
-            {loading?<span className="spin"><SVG d={IC.spin} size={14} color="#9ca3af"/></span>:"Ask"}
+        <p style={{fontSize:13,color:"#6b7280",marginBottom:14}}>Ask anything about your {reqs.length} requests — trends, patterns, duplicates, or breakdowns.</p>
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key==="Enter") ask(q); }} placeholder="e.g. What are the top trends in the backlog?" style={Object.assign({},IS,{flex:1})}/>
+          <Btn onClick={() => ask(q)} disabled={!q.trim()||loading} style={{background:q.trim()&&!loading?"#7c3aed":"#f3f4f6",color:q.trim()&&!loading?"#fff":"#9ca3af",display:"flex",alignItems:"center",gap:6}}>
+            {loading ? <span className="spin"><SVG d={IC.spin} size={14} color="#9ca3af"/></span> : "Ask"}
           </Btn>
         </div>
-        <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>{suggestions.map(s=><button key={s} onClick={()=>{setQ(s);ask(s);}} style={{ fontSize:11, padding:"4px 10px", background:"#f5f3ff", color:"#6d28d9", border:"none", borderRadius:999, cursor:"pointer" }}>{s}</button>)}</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {suggestions.map((s) => <button key={s} onClick={() => { setQ(s); ask(s); }} style={{fontSize:11,padding:"4px 10px",background:"#f5f3ff",color:"#6d28d9",border:"none",borderRadius:999,cursor:"pointer"}}>{s}</button>)}
+        </div>
       </Card>
-      {loading&&<Card style={{ display:"flex", alignItems:"center", gap:12 }}><span className="spin"><SVG d={IC.spin} size={18} color="#7c3aed"/></span><p style={{ fontSize:13, color:"#6b7280" }}>Analyzing {reqs.length} requests…</p></Card>}
-      {res&&!loading&&<Card><p style={{ fontSize:11, color:"#9ca3af", fontStyle:"italic", marginBottom:12 }}>"{asked}"</p><MD text={res}/></Card>}
-      {err&&<div style={{ background:"#fef2f2", borderRadius:12, border:"1px solid #fecaca", padding:16, fontSize:13, color:"#dc2626" }}>{err}</div>}
+      {loading && <Card style={{display:"flex",alignItems:"center",gap:12}}><span className="spin"><SVG d={IC.spin} size={18} color="#7c3aed"/></span><p style={{fontSize:13,color:"#6b7280"}}>Analyzing {reqs.length} requests…</p></Card>}
+      {res && !loading && <Card><p style={{fontSize:11,color:"#9ca3af",fontStyle:"italic",marginBottom:12}}>"{asked}"</p><MD text={res}/></Card>}
+      {err && <div style={{background:"#fef2f2",borderRadius:12,border:"1px solid #fecaca",padding:16,fontSize:13,color:"#dc2626"}}>{err}</div>}
     </div>
   );
 };
@@ -786,89 +841,89 @@ const AIQuery = ({ reqs }) => {
 // APP
 // ─────────────────────────────────────────────────────────────────────────────
 const App = () => {
-  const [view,setView]               = useState("dashboard");
-  const [reqs,setReqs]               = useState([]);  // UI only — Gist is source of truth
-  const [ready,setReady]             = useState(false);
-  const [syncing,setSyncing]         = useState(false);
-  const [boardFilters,setBoardFilters] = useState({});
-  const [needsSetup,setNeedsSetup]   = useState(!getToken());
+  const [view, setView]               = useState("dashboard");
+  const [reqs, setReqs]               = useState([]);
+  const [ready, setReady]             = useState(false);
+  const [syncing, setSyncing]         = useState(false);
+  const [boardFilters, setBoardFilters] = useState({});
 
-  const navigateBoard = filters => { setBoardFilters(filters); setView("board"); };
+  const navigateBoard = (filters) => { setBoardFilters(filters); setView("board"); };
 
   useEffect(() => {
-    if (needsSetup) return;
     (async () => {
       setSyncing(true);
-      try { const data=await loadData(); setReqs(data); }
-      catch(e) { clearToken(); setNeedsSetup(true); }
+      try { const data = await loadData(); setReqs(data.map(normalizeRecord)); }
+      catch(e) { alert("Could not load data from Gist. Error: " + e.message); }
       setSyncing(false); setReady(true);
     })();
-  }, [needsSetup]);
+  }, []);
 
-  const persist = useCallback(async updated => {
+  const persist = useCallback(async (updated) => {
     setSyncing(true);
     try { await saveData(updated); setReqs(updated); }
-    catch(e) {
-      alert("⚠️ Failed to save to Gist.\n\nError: "+e.message+"\n\nYour token may have expired.");
-      clearToken(); setNeedsSetup(true);
-    }
+    catch(e) { alert("Failed to save. Error: " + e.message); }
     setSyncing(false);
   }, []);
 
-  const addReq    = form    => persist([{...form, id:uid(), status:"Backlog", createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()}, ...reqs]);
-  const updStatus = (id,s)  => persist(reqs.map(r=>r.id===id?{...r,status:s,updatedAt:new Date().toISOString()}:r));
-  const updateReq = updated => persist(reqs.map(r=>r.id===updated.id?{...updated,updatedAt:new Date().toISOString()}:r));
-  const removeReq = id      => persist(reqs.filter(r=>r.id!==id));
-  const importReqs= rows    => persist([...rows,...reqs]);
+  const addReq     = (form)     => persist([Object.assign({},form,{id:uid(),status:"Backlog",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()})].concat(reqs));
+  const updStatus  = (id,s)     => persist(reqs.map((r) => r.id===id ? Object.assign({},r,{status:s,updatedAt:new Date().toISOString()}) : r));
+  const updateReq  = (updated)  => persist(reqs.map((r) => r.id===updated.id ? Object.assign({},updated,{updatedAt:new Date().toISOString()}) : r));
+  const removeReq  = (id)       => persist(reqs.filter((r) => r.id !== id));
+  const importReqs = (rows)     => persist(rows.concat(reqs));
+  const deleteClassValue = useCallback((field, value) => {
+    persist(reqs.map((r) => {
+      if (field === "client") return Object.assign({},r,{client:(r.client||[]).filter((c) => c!==value),updatedAt:new Date().toISOString()});
+      if (r[field] === value) return Object.assign({},r,{[field]:"",updatedAt:new Date().toISOString()});
+      return r;
+    }));
+  }, [reqs, persist]);
 
-  const uniq = key => [...new Set(reqs.map(r=>r[key]).filter(Boolean))].sort();
-  const lists = useMemo(()=>({
+  const uniq = (key) => Array.from(new Set(reqs.map((r) => r[key]).filter(Boolean))).sort();
+  const lists = useMemo(() => ({
     products:          uniq("product"),
     productAreas:      uniq("productArea"),
     engagementFormats: uniq("engagementFormat"),
-    teamMembers:       [...new Set(["Alex","Jordan","Sam","Taylor","Morgan",...reqs.map(r=>r.submittedBy).filter(Boolean)])].sort(),
-  }),[reqs]);
+    clients:           Array.from(new Set(reqs.flatMap((r) => Array.isArray(r.client)?r.client:(r.client?[r.client]:[])).filter(Boolean))).sort(),
+    teamMembers:       Array.from(new Set(["Alex","Jordan","Sam","Taylor","Morgan"].concat(reqs.map((r) => r.submittedBy).filter(Boolean)))).sort()
+  }), [reqs]);
 
   const NAV = [
-    {id:"dashboard", label:"Dashboard",  icon:IC.bar},
-    {id:"submit",    label:"Submit",     icon:IC.plus},
-    {id:"board",     label:"Requests",   icon:IC.list},
-    {id:"query",     label:"AI Insights",icon:IC.spark},
-    {id:"import",    label:"Import",     icon:IC.upload},
+    {id:"dashboard", label:"Dashboard",   icon:IC.bar},
+    {id:"submit",    label:"Submit",      icon:IC.plus},
+    {id:"board",     label:"Requests",    icon:IC.list},
+    {id:"query",     label:"AI Insights", icon:IC.spark},
+    {id:"import",    label:"Import",      icon:IC.upload},
+    {id:"manage",    label:"Manage",      icon:IC.settings}
   ];
 
-  if (needsSetup) return <SetupScreen onDone={data=>{setReqs(data);setNeedsSetup(false);setReady(true);}}/>;
-  if (!ready) return <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", color:"#9ca3af", fontSize:14 }}>Loading from Gist…</div>;
+  if (!ready) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",color:"#9ca3af",fontSize:14}}>Loading from Gist…</div>;
 
   return (
-    <div style={{ minHeight:"100vh", background:"#f9fafb" }}>
-      <header style={{ background:"#fff", borderBottom:"1px solid #e5e7eb", padding:"10px 24px", position:"sticky", top:0, zIndex:20 }}>
-        <div style={{ maxWidth:1200, margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ width:28, height:28, background:"#4f46e5", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}><SVG d={IC.zap} size={16} color="#fff"/></div>
-            <span style={{ fontSize:17, fontWeight:700, color:"#111827" }}>FeatureTrack</span>
-            <span style={{ fontSize:11, color:"#9ca3af", background:"#f3f4f6", padding:"2px 8px", borderRadius:999, marginLeft:4 }}>{reqs.length} request{reqs.length!==1?"s":""}</span>
-            {syncing&&<span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:"#6366f1" }}><span className="spin"><SVG d={IC.spin} size={11} color="#6366f1"/></span>Saving…</span>}
+    <div style={{minHeight:"100vh",background:"#f9fafb"}}>
+      <header style={{background:"#fff",borderBottom:"1px solid #e5e7eb",padding:"10px 24px",position:"sticky",top:0,zIndex:20}}>
+        <div style={{maxWidth:1200,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:28,height:28,background:"#4f46e5",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}><SVG d={IC.zap} size={16} color="#fff"/></div>
+            <span style={{fontSize:17,fontWeight:700,color:"#111827"}}>FeatureTrack</span>
+            <span style={{fontSize:11,color:"#9ca3af",background:"#f3f4f6",padding:"2px 8px",borderRadius:999,marginLeft:4}}>{reqs.length} request{reqs.length!==1?"s":""}</span>
+            {syncing && <span style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:"#6366f1"}}><span className="spin"><SVG d={IC.spin} size={11} color="#6366f1"/></span>Saving…</span>}
           </div>
-          <nav style={{ display:"flex", gap:4, alignItems:"center" }}>
-            {NAV.map(({id,label,icon})=>(
-              <button key={id} onClick={()=>setView(id)} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 12px", borderRadius:8, fontSize:13, fontWeight:500, border:"none", cursor:"pointer", background:view===id?"#4f46e5":"transparent", color:view===id?"#fff":"#6b7280" }}>
+          <nav style={{display:"flex",gap:4}}>
+            {NAV.map(({id,label,icon}) => (
+              <button key={id} onClick={() => setView(id)} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderRadius:8,fontSize:13,fontWeight:500,border:"none",cursor:"pointer",background:view===id?"#4f46e5":"transparent",color:view===id?"#fff":"#6b7280"}}>
                 <SVG d={icon} size={14} color={view===id?"#fff":"#6b7280"}/>{label}
               </button>
             ))}
-            <button onClick={()=>{clearToken();setNeedsSetup(true);}}
-              style={{ marginLeft:8, padding:"7px 12px", borderRadius:8, fontSize:12, fontWeight:500, border:"1px solid #e5e7eb", background:"#f9fafb", color:"#9ca3af", cursor:"pointer" }}>
-              Change Token
-            </button>
           </nav>
         </div>
       </header>
-      <main style={{ maxWidth:1200, margin:"0 auto", padding:"28px 24px" }}>
-        {view==="dashboard"&&<Dashboard reqs={reqs} onImport={()=>setView("import")} onNavigate={navigateBoard} onStatus={updStatus}/>}
-        {view==="submit"   &&<SubmitForm onSubmit={addReq} onDone={()=>setView("board")} lists={lists}/>}
-        {view==="board"    &&<Board key={JSON.stringify(boardFilters)} reqs={reqs} onStatus={updStatus} onRemove={removeReq} onEdit={updateReq} lists={lists} initialFilters={boardFilters} onBack={Object.keys(boardFilters).length?()=>setView("dashboard"):null}/>}
-        {view==="query"    &&<AIQuery reqs={reqs}/>}
-        {view==="import"   &&<ImportView onImport={importReqs} onDone={()=>setView("dashboard")}/>}
+      <main style={{maxWidth:1200,margin:"0 auto",padding:"28px 24px"}}>
+        {view==="dashboard" && <Dashboard reqs={reqs} onImport={() => setView("import")} onNavigate={navigateBoard} onStatus={updStatus}/>}
+        {view==="submit"    && <SubmitForm onSubmit={addReq} onDone={() => setView("board")} lists={lists}/>}
+        {view==="board"     && <Board key={JSON.stringify(boardFilters)} reqs={reqs} onStatus={updStatus} onRemove={removeReq} onEdit={updateReq} lists={lists} initialFilters={boardFilters} onBack={Object.keys(boardFilters).length?() => setView("dashboard"):null}/>}
+        {view==="query"     && <AIQuery reqs={reqs}/>}
+        {view==="import"    && <ImportView onImport={importReqs} onDone={() => setView("dashboard")}/>}
+        {view==="manage"    && <ManageView lists={lists} onDelete={deleteClassValue}/>}
       </main>
     </div>
   );
