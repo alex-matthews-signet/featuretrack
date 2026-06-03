@@ -33,35 +33,31 @@ const GIST_FILE = "featuretrack-db.json";
 const ANTH_KEY  = ""; // Optional: paste your Anthropic API key for AI Insights
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TOKEN — stored in browser localStorage, never in source code
+// TOKEN — stored in browser localStorage only, never in source code
 // ─────────────────────────────────────────────────────────────────────────────
-const getToken  = () => localStorage.getItem("ft_gist_token") || "";
-const saveToken = t  => localStorage.setItem("ft_gist_token", t);
+const getToken   = () => localStorage.getItem("ft_gist_token") || "";
+const saveToken  = t  => localStorage.setItem("ft_gist_token", t);
 const clearToken = () => localStorage.removeItem("ft_gist_token");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GIST API — single source of truth for all data
 // ─────────────────────────────────────────────────────────────────────────────
 const GIST_URL = `https://api.github.com/gists/${GIST_ID}`;
-
 const gistHeaders = () => ({
   "Authorization": `token ${getToken()}`,
   "Accept": "application/vnd.github.v3+json",
   "Content-Type": "application/json",
   "User-Agent": "FeatureTrack"
 });
-
 const loadData = async () => {
   const r = await fetch(GIST_URL, { headers: gistHeaders() });
   if (!r.ok) throw new Error(`${r.status}`);
   const d = await r.json();
   return JSON.parse(d.files[GIST_FILE]?.content || "[]");
 };
-
 const saveData = async records => {
   const r = await fetch(GIST_URL, {
-    method: "PATCH",
-    headers: gistHeaders(),
+    method: "PATCH", headers: gistHeaders(),
     body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(records) } } })
   });
   if (!r.ok) throw new Error(`${r.status}`);
@@ -71,7 +67,6 @@ const saveData = async records => {
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-
 const STATUS = {
   Backlog:   { bg:"#f1f5f9", color:"#475569", dot:"#94a3b8" },
   Accepted:  { bg:"#dbeafe", color:"#1d4ed8", dot:"#3b82f6" },
@@ -82,7 +77,6 @@ const PRI = {
   Medium: { color:"#d97706", bg:"#fffbeb", border:"#fde68a" },
   High:   { color:"#dc2626", bg:"#fef2f2", border:"#fecaca" },
 };
-
 const normalizeStatus = v => {
   if (!v) return "Backlog";
   const s = v.toString().toLowerCase();
@@ -100,26 +94,24 @@ const normalizePriority = v => {
 const parseDate = v => {
   if (!v) return new Date().toISOString();
   if (v instanceof Date) return isNaN(v) ? new Date().toISOString() : v.toISOString();
-  const d = new Date(v);
-  return isNaN(d) ? new Date().toISOString() : d.toISOString();
+  const d = new Date(v); return isNaN(d) ? new Date().toISOString() : d.toISOString();
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // XLSX IMPORT
 // ─────────────────────────────────────────────────────────────────────────────
 const FIELD_PATTERNS = {
-  title:        /title|request.?name|feature.?name|fer.?name|summary|subject/i,
-  description:  /description|details?|notes?|comments?|use.?case|background/i,
-  client:       /client|customer|account|company|org/i,
-  productSubset:/product.?subset|subset/i,
-  productArea:  /product.?area|^area$/i,
-  product:      /product/i,
-  ebcType:      /ebc|events?|reference/i,
-  priority:     /priority|urgency|severity/i,
-  status:       /^status$|stage|state/i,
-  submittedBy:  /submitted.?by|requestor|owner|csm|rep|requested.?by/i,
-  date:         /date|submitted.?date|created.?date/i,
-  tags:         /tag|label/i,
+  title:            /title|request.?name|feature.?name|fer.?name|summary|subject/i,
+  description:      /description|details?|notes?|comments?|use.?case|background/i,
+  client:           /client|customer|account|company|org/i,
+  productArea:      /product.?area|^area$/i,
+  product:          /product/i,
+  engagementFormat: /ebc|events?|reference|engagement.?format/i,
+  priority:         /priority|urgency|severity/i,
+  status:           /^status$|stage|state/i,
+  submittedBy:      /submitted.?by|requestor|owner|csm|rep|requested.?by/i,
+  date:             /date|submitted.?date|created.?date/i,
+  tags:             /tag|label/i,
 };
 const detectColumns = headers => {
   const map = {};
@@ -142,10 +134,10 @@ const mapRow = (row, colMap, allHeaders) => {
   allHeaders.forEach(h => { if (!mappedCols.has(h) && h) { const v = str(row[h]); if (v) tags.push(`${h}: ${v}`); } });
   return {
     id: uid(),
-    title: str(g('title')) || str(g('description'))?.slice(0, 60) || 'Untitled',
+    title: str(g('title')) || str(g('description'))?.slice(0,60) || 'Untitled',
     description: str(g('description')), client: str(g('client')),
-    product: str(g('product')), productSubset: str(g('productSubset')),
-    productArea: str(g('productArea')), ebcType: str(g('ebcType')),
+    product: str(g('product')), productArea: str(g('productArea')),
+    engagementFormat: str(g('engagementFormat')),
     submittedBy: str(g('submittedBy')), priority: normalizePriority(g('priority')),
     status: normalizeStatus(g('status')), tags,
     createdAt: parseDate(g('date')), updatedAt: parseDate(g('date')), isClient: !!str(g('client')),
@@ -185,22 +177,18 @@ const IC = {
   spin:  "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15",
   file:  ["M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z","M14 2v6h6"],
   back:  ["M19 12H5","M12 19l-7-7 7-7"],
-  key:   ["M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UI PRIMITIVES
 // ─────────────────────────────────────────────────────────────────────────────
 const Card = ({ children, style={} }) => (
-  <div style={{ background:"#fff", borderRadius:12, border:"1px solid #e5e7eb", padding:20, ...style }}>
-    {children}
-  </div>
+  <div style={{ background:"#fff", borderRadius:12, border:"1px solid #e5e7eb", padding:20, ...style }}>{children}</div>
 );
 const StatusPill = ({ status }) => (
   <span style={{ display:"inline-flex", alignItems:"center", gap:5, fontSize:11, fontWeight:600,
     padding:"2px 8px", borderRadius:999, background:STATUS[status].bg, color:STATUS[status].color }}>
-    <span style={{ width:6, height:6, borderRadius:"50%", background:STATUS[status].dot, flexShrink:0 }}/>
-    {status}
+    <span style={{ width:6, height:6, borderRadius:"50%", background:STATUS[status].dot, flexShrink:0 }}/>{status}
   </span>
 );
 const PriBadge = ({ p }) => (
@@ -208,17 +196,31 @@ const PriBadge = ({ p }) => (
     border:`1px solid ${PRI[p].border}`, color:PRI[p].color, background:PRI[p].bg }}>{p}</span>
 );
 const Tag = ({ children }) => (
-  <span style={{ fontSize:11, background:"#f8fafc", color:"#475569",
-    border:"1px solid #e2e8f0", borderRadius:999, padding:"2px 8px" }}>{children}</span>
+  <span style={{ fontSize:11, background:"#f8fafc", color:"#475569", border:"1px solid #e2e8f0", borderRadius:999, padding:"2px 8px" }}>{children}</span>
 );
 const Btn = ({ onClick, disabled, style={}, children }) => (
   <button onClick={onClick} disabled={disabled}
-    style={{ border:"none", borderRadius:8, padding:"8px 16px", fontSize:13, fontWeight:600,
-      cursor:disabled?"not-allowed":"pointer", ...style }}>{children}</button>
+    style={{ border:"none", borderRadius:8, padding:"8px 16px", fontSize:13, fontWeight:600, cursor:disabled?"not-allowed":"pointer", ...style }}>{children}</button>
 );
 const InputStyle = { width:"100%", border:"1px solid #d1d5db", borderRadius:8, padding:"8px 12px", fontSize:13, background:"#fff" };
 const SectionLabel = ({ children }) => (
   <p style={{ fontSize:10, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:"0.8px", margin:"0 0 8px" }}>{children}</p>
+);
+
+// Classification field — datalist input that supports selecting existing OR typing a new value
+const ClassField = ({ label, value, onChange, listId, options, hint }) => (
+  <div>
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6 }}>
+      <label style={{ fontSize:13, fontWeight:500, color:"#374151" }}>{label}</label>
+      <span style={{ fontSize:10, color:"#9ca3af" }}>Select or type new</span>
+    </div>
+    <input list={listId} value={value} onChange={e=>onChange(e.target.value)}
+      placeholder="Choose existing or type to add new…"
+      style={{ ...InputStyle, background: value && !options.includes(value) ? "#fffbeb" : "#fff" }}/>
+    <datalist id={listId}>{options.map(v=><option key={v} value={v}/>)}</datalist>
+    {value && !options.includes(value) &&
+      <p style={{ fontSize:10, color:"#d97706", marginTop:4 }}>✦ New value — will be added to the list on save</p>}
+  </div>
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,21 +249,13 @@ const SetupScreen = ({ onDone }) => {
   const [token, setToken] = useState("");
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
-
   const handleSave = async () => {
     if (!token.trim()) return;
     setTesting(true); setError("");
-    try {
-      saveToken(token.trim());
-      const data = await loadData();
-      onDone(data);
-    } catch(e) {
-      setError("Could not connect. Check your token has 'gist' scope and try again. Error: " + e.message);
-      clearToken();
-    }
+    try { saveToken(token.trim()); const data = await loadData(); onDone(data); }
+    catch(e) { setError("Could not connect. Check your token has 'gist' scope. Error: " + e.message); clearToken(); }
     setTesting(false);
   };
-
   return (
     <div style={{ minHeight:"100vh", background:"#f9fafb", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
       <div style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", padding:40, maxWidth:480, width:"100%", boxShadow:"0 4px 24px rgba(0,0,0,0.06)" }}>
@@ -272,9 +266,7 @@ const SetupScreen = ({ onDone }) => {
           <span style={{ fontSize:20, fontWeight:700, color:"#111827" }}>FeatureTrack</span>
         </div>
         <h2 style={{ fontSize:16, fontWeight:700, color:"#111827", marginBottom:6 }}>Enter your GitHub Token</h2>
-        <p style={{ fontSize:13, color:"#6b7280", marginBottom:20, lineHeight:1.6 }}>
-          A GitHub Personal Access Token is needed to read and write the shared database. It is stored only in your browser — never in the source code.
-        </p>
+        <p style={{ fontSize:13, color:"#6b7280", marginBottom:20, lineHeight:1.6 }}>A GitHub Personal Access Token is needed to read and write the shared database. It is stored only in your browser — never in the source code.</p>
         <div style={{ background:"#f8fafc", borderRadius:10, padding:16, marginBottom:20, fontSize:12, color:"#475569", lineHeight:1.8 }}>
           <strong>To create a token:</strong><br/>
           1. Go to <strong>github.com → Settings → Developer Settings</strong><br/>
@@ -283,14 +275,12 @@ const SetupScreen = ({ onDone }) => {
           4. Check only the <strong>gist</strong> scope<br/>
           5. Copy and paste it below
         </div>
-        <input value={token} onChange={e=>setToken(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&handleSave()}
-          placeholder="ghp_..." style={{ ...InputStyle, marginBottom:12, fontFamily:"monospace", fontSize:12 }}/>
+        <input value={token} onChange={e=>setToken(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSave()}
+          placeholder="ghp_…" style={{ ...InputStyle, marginBottom:12, fontFamily:"monospace", fontSize:12 }}/>
         {error && <p style={{ fontSize:12, color:"#dc2626", marginBottom:12, lineHeight:1.5 }}>{error}</p>}
         <Btn onClick={handleSave} disabled={!token.trim()||testing}
-          style={{ width:"100%", padding:"11px 0", background:token.trim()&&!testing?"#4f46e5":"#f3f4f6",
-            color:token.trim()&&!testing?"#fff":"#9ca3af" }}>
-          {testing ? "Connecting…" : "Connect & Launch"}
+          style={{ width:"100%", padding:"11px 0", background:token.trim()&&!testing?"#4f46e5":"#f3f4f6", color:token.trim()&&!testing?"#fff":"#9ca3af" }}>
+          {testing?"Connecting…":"Connect & Launch"}
         </Btn>
       </div>
     </div>
@@ -302,21 +292,19 @@ const SetupScreen = ({ onDone }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const Dashboard = ({ reqs, onImport, onNavigate, onStatus }) => {
   const [selected, setSelected] = useState(null);
-  const byStatus = useMemo(() => { const m={Backlog:0,Accepted:0,Completed:0}; reqs.forEach(r=>m[r.status]=(m[r.status]||0)+1); return m; },[reqs]);
+  const byStatus = useMemo(()=>{ const m={Backlog:0,Accepted:0,Completed:0}; reqs.forEach(r=>m[r.status]=(m[r.status]||0)+1); return m; },[reqs]);
   const topN = (key,n=6) => { const m={}; reqs.forEach(r=>{const v=r[key];if(v)m[v]=(m[v]||0)+1;}); return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,n); };
-  const topProds   = useMemo(()=>topN('product'),[reqs]);
-  const topSubsets = useMemo(()=>topN('productSubset'),[reqs]);
-  const topAreas   = useMemo(()=>topN('productArea'),[reqs]);
-  const topEBC     = useMemo(()=>topN('ebcType'),[reqs]);
-  const topClients = useMemo(()=>topN('client'),[reqs]);
-  const recent     = useMemo(()=>[...reqs].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,6),[reqs]);
+  const topProds    = useMemo(()=>topN('product'),[reqs]);
+  const topAreas    = useMemo(()=>topN('productArea'),[reqs]);
+  const topFormats  = useMemo(()=>topN('engagementFormat'),[reqs]);
+  const topClients  = useMemo(()=>topN('client'),[reqs]);
+  const recent      = useMemo(()=>[...reqs].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,6),[reqs]);
 
   const renderBar = (items, color, filterKey) => !items.length
     ? <p style={{ fontSize:13, color:"#9ca3af", fontStyle:"italic" }}>No data</p>
-    : <div>{items.map(([k,v]) => (
+    : <div>{items.map(([k,v])=>(
         <button key={k} onClick={()=>onNavigate({[filterKey]:k})}
-          style={{ display:"block", width:"100%", textAlign:"left", background:"none", border:"none",
-            padding:"5px 6px", borderRadius:6, cursor:"pointer", marginBottom:4 }}
+          style={{ display:"block", width:"100%", textAlign:"left", background:"none", border:"none", padding:"5px 6px", borderRadius:6, cursor:"pointer", marginBottom:4 }}
           onMouseEnter={e=>e.currentTarget.style.background="#eef2ff"}
           onMouseLeave={e=>e.currentTarget.style.background="none"}>
           <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:3 }}>
@@ -352,18 +340,16 @@ const Dashboard = ({ reqs, onImport, onNavigate, onStatus }) => {
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:20 }}>
         <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By Product</p>{renderBar(topProds,"#6366f1","product")}</Card>
-        <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By Product Subset</p>{renderBar(topSubsets,"#0ea5e9","productSubset")}</Card>
-        <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By EBC / Events / Reference</p>{renderBar(topEBC,"#d946ef","ebcType")}</Card>
+        <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By Product Area</p>{renderBar(topAreas,"#8b5cf6","area")}</Card>
+        <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By Engagement Format</p>{renderBar(topFormats,"#d946ef","engagementFormat")}</Card>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
-        <Card><p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>By Product Area</p>{renderBar(topAreas,"#8b5cf6","area")}</Card>
         <Card>
           <p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>Top Requesting Clients</p>
           {!topClients.length ? <p style={{ fontSize:13, color:"#9ca3af", fontStyle:"italic" }}>No client-linked requests</p>
             : topClients.map(([c,v])=>(
               <button key={c} onClick={()=>onNavigate({client:c})}
-                style={{ display:"flex", justifyContent:"space-between", alignItems:"center", width:"100%",
-                  background:"none", border:"none", padding:"7px 0", borderBottom:"1px solid #f3f4f6", cursor:"pointer" }}
+                style={{ display:"flex", justifyContent:"space-between", alignItems:"center", width:"100%", background:"none", border:"none", padding:"7px 0", borderBottom:"1px solid #f3f4f6", cursor:"pointer" }}
                 onMouseEnter={e=>e.currentTarget.style.background="#f9fafb"}
                 onMouseLeave={e=>e.currentTarget.style.background="none"}>
                 <span style={{ fontSize:13, color:"#374151" }}>{c}</span>
@@ -372,59 +358,52 @@ const Dashboard = ({ reqs, onImport, onNavigate, onStatus }) => {
             ))
           }
         </Card>
+        <Card>
+          <p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>Recent Submissions</p>
+          {!recent.length ? <p style={{ fontSize:13, color:"#9ca3af", fontStyle:"italic" }}>None yet</p>
+            : <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {recent.map(r=>(
+                  <button key={r.id} onClick={()=>setSelected(r)}
+                    style={{ display:"flex", gap:10, alignItems:"flex-start", background:"none", border:"none", cursor:"pointer", textAlign:"left", borderRadius:8, padding:6 }}
+                    onMouseEnter={e=>e.currentTarget.style.background="#f9fafb"}
+                    onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                    <span style={{ width:8, height:8, borderRadius:"50%", background:STATUS[r.status].dot, flexShrink:0, marginTop:5 }}/>
+                    <div style={{ minWidth:0 }}>
+                      <p style={{ fontSize:13, fontWeight:500, color:"#111827", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.title}</p>
+                      <p style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}>{r.product||"—"} · {new Date(r.createdAt).toLocaleDateString()}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+          }
+        </Card>
       </div>
-      <Card>
-        <p style={{ fontWeight:600, fontSize:13, marginBottom:14 }}>Recent Submissions</p>
-        {!recent.length ? <p style={{ fontSize:13, color:"#9ca3af", fontStyle:"italic" }}>None yet</p>
-          : <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-              {recent.map(r=>(
-                <button key={r.id} onClick={()=>setSelected(r)}
-                  style={{ display:"flex", gap:10, alignItems:"flex-start", background:"none", border:"none",
-                    cursor:"pointer", textAlign:"left", borderRadius:8, padding:6 }}
-                  onMouseEnter={e=>e.currentTarget.style.background="#f9fafb"}
-                  onMouseLeave={e=>e.currentTarget.style.background="none"}>
-                  <span style={{ width:8, height:8, borderRadius:"50%", background:STATUS[r.status].dot, flexShrink:0, marginTop:5 }}/>
-                  <div style={{ minWidth:0 }}>
-                    <p style={{ fontSize:13, fontWeight:500, color:"#111827", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.title}</p>
-                    <p style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}>{[r.product,r.productSubset].filter(Boolean).join(" · ")} · {new Date(r.createdAt).toLocaleDateString()}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-        }
-      </Card>
       {selected && (
         <div onClick={()=>setSelected(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
           <div onClick={e=>e.stopPropagation()} style={{ background:"#fff", borderRadius:16, width:"100%", maxWidth:520, maxHeight:"90vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.2)" }}>
             <div style={{ padding:"20px 24px", borderBottom:"1px solid #f3f4f6", display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
               <div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}>
-                  <StatusPill status={selected.status}/>
-                  <PriBadge p={selected.priority}/>
-                </div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}><StatusPill status={selected.status}/><PriBadge p={selected.priority}/></div>
                 <h2 style={{ fontSize:16, fontWeight:700, color:"#111827", lineHeight:1.4 }}>{selected.title}</h2>
               </div>
               <button onClick={()=>setSelected(null)} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", flexShrink:0 }}><SVG d={IC.x} size={18}/></button>
             </div>
             <div style={{ padding:24, display:"flex", flexDirection:"column", gap:16 }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-                {[["Product",selected.product],["Product Subset",selected.productSubset],["Product Area",selected.productArea],
-                  ["EBC / Events / Ref",selected.ebcType],["Client",selected.client],["Submitted By",selected.submittedBy]
+                {[["Product",selected.product],["Product Area",selected.productArea],["Engagement Format",selected.engagementFormat],
+                  ["Client",selected.client],["Submitted By",selected.submittedBy]
                 ].filter(([,v])=>v).map(([l,v])=>(
                   <div key={l}><SectionLabel>{l}</SectionLabel><p style={{ fontSize:13, fontWeight:500, color:"#1f2937" }}>{v}</p></div>
                 ))}
               </div>
-              {selected.description && <><SectionLabel>Description</SectionLabel><p style={{ fontSize:13, color:"#374151", lineHeight:1.6, marginTop:-8 }}>{selected.description}</p></>}
-              {selected.tags?.length>0 && <><SectionLabel>Tags</SectionLabel><div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:-8 }}>{selected.tags.map((t,i)=><Tag key={i}>{t}</Tag>)}</div></>}
+              {selected.description&&<><SectionLabel>Description</SectionLabel><p style={{ fontSize:13, color:"#374151", lineHeight:1.6, marginTop:-8 }}>{selected.description}</p></>}
+              {selected.tags?.length>0&&<><SectionLabel>Tags</SectionLabel><div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:-8 }}>{selected.tags.map((t,i)=><Tag key={i}>{t}</Tag>)}</div></>}
               <div>
                 <SectionLabel>Move To</SectionLabel>
                 <div style={{ display:"flex", gap:8 }}>
                   {Object.keys(STATUS).map(s=>(
                     <button key={s} onClick={()=>{onStatus(selected.id,s);setSelected(r=>({...r,status:s}));}}
-                      style={{ padding:"6px 14px", borderRadius:8, fontSize:12, fontWeight:500, cursor:"pointer",
-                        border:selected.status===s?"none":"1px solid #e5e7eb",
-                        background:selected.status===s?STATUS[s].bg:"#f9fafb",
-                        color:selected.status===s?STATUS[s].color:"#6b7280" }}>{s}</button>
+                      style={{ padding:"6px 14px", borderRadius:8, fontSize:12, fontWeight:500, cursor:"pointer", border:selected.status===s?"none":"1px solid #e5e7eb", background:selected.status===s?STATUS[s].bg:"#f9fafb", color:selected.status===s?STATUS[s].color:"#6b7280" }}>{s}</button>
                   ))}
                 </div>
               </div>
@@ -440,9 +419,11 @@ const Dashboard = ({ reqs, onImport, onNavigate, onStatus }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // IMPORT
 // ─────────────────────────────────────────────────────────────────────────────
-const FIELD_LABELS = { title:"Title", description:"Description", client:"Client", product:"Product",
-  productSubset:"Product Subset", productArea:"Product Area", ebcType:"EBC / Events / Ref",
-  priority:"Priority", status:"Status", submittedBy:"Submitted By", date:"Date", tags:"Tags" };
+const FIELD_LABELS = {
+  title:"Title", description:"Description", client:"Client", product:"Product",
+  productArea:"Product Area", engagementFormat:"Engagement Format",
+  priority:"Priority", status:"Status", submittedBy:"Submitted By", date:"Date", tags:"Tags"
+};
 
 const ImportView = ({ onImport, onDone }) => {
   const [step, setStep] = useState("upload");
@@ -455,12 +436,10 @@ const ImportView = ({ onImport, onDone }) => {
     try { const buf=await f.arrayBuffer(); setPreview(parseXLSX(new Uint8Array(buf))); setStep("preview"); }
     catch(e) { setError("Could not read file: "+e.message); }
   };
-
   const confirm = () => { setImporting(true); onImport(preview.rows); setTimeout(()=>onDone(),1200); };
-
   const updateMapping = (field, col) => setPreview(p => {
     const colMap = {...p.colMap,[field]:col||undefined};
-    return {...p,colMap,rows:parseXLSX.remap(p.rawRows,p.headers,colMap)};
+    return {...p, colMap, rows:parseXLSX.remap(p.rawRows,p.headers,colMap)};
   });
 
   if (step==="preview"&&preview) {
@@ -475,7 +454,7 @@ const ImportView = ({ onImport, onDone }) => {
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:10 }}>
               {Object.keys(FIELD_LABELS).map(field=>(
                 <div key={field} style={{ display:"flex", alignItems:"center", gap:8, background:"#fff", borderRadius:8, padding:"6px 10px", border:"1px solid #e2e8f0", fontSize:12 }}>
-                  <span style={{ fontWeight:600, color:"#4f46e5", width:110, flexShrink:0 }}>{FIELD_LABELS[field]}</span>
+                  <span style={{ fontWeight:600, color:"#4f46e5", width:130, flexShrink:0 }}>{FIELD_LABELS[field]}</span>
                   <span style={{ color:"#94a3b8" }}>←</span>
                   <select value={preview.colMap[field]||""} onChange={e=>updateMapping(field,e.target.value)}
                     style={{ flex:1, fontSize:11, border:"none", background:"transparent", color:"#475569", cursor:"pointer" }}>
@@ -485,13 +464,13 @@ const ImportView = ({ onImport, onDone }) => {
                 </div>
               ))}
             </div>
-            {unmapped.length>0 && <p style={{ fontSize:11, color:"#94a3b8" }}><strong>{unmapped.length} unmapped</strong> stored as tags: {unmapped.join(", ")}</p>}
+            {unmapped.length>0&&<p style={{ fontSize:11, color:"#94a3b8" }}><strong>{unmapped.length} unmapped</strong> stored as tags: {unmapped.join(", ")}</p>}
           </div>
           <div style={{ borderRadius:10, border:"1px solid #e5e7eb", overflow:"hidden", marginBottom:20 }}>
             <div style={{ overflowX:"auto", maxHeight:280 }}>
               <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
                 <thead style={{ background:"#f9fafb", position:"sticky", top:0 }}>
-                  <tr>{["Title","Client","Product","Subset","Area","EBC/Events","Status","Priority"].map(h=>(
+                  <tr>{["Title","Client","Product","Product Area","Engagement Format","Status","Priority"].map(h=>(
                     <th key={h} style={{ textAlign:"left", padding:"8px 12px", fontWeight:600, color:"#6b7280", borderBottom:"1px solid #e5e7eb", whiteSpace:"nowrap" }}>{h}</th>
                   ))}</tr>
                 </thead>
@@ -501,9 +480,8 @@ const ImportView = ({ onImport, onDone }) => {
                       <td style={{ padding:"7px 12px", fontWeight:500, color:"#1f2937", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.title}</td>
                       <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.client||"—"}</td>
                       <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.product||"—"}</td>
-                      <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.productSubset||"—"}</td>
                       <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.productArea||"—"}</td>
-                      <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.ebcType||"—"}</td>
+                      <td style={{ padding:"7px 12px", color:"#6b7280", whiteSpace:"nowrap" }}>{r.engagementFormat||"—"}</td>
                       <td style={{ padding:"7px 12px" }}><StatusPill status={r.status}/></td>
                       <td style={{ padding:"7px 12px" }}><PriBadge p={r.priority}/></td>
                     </tr>
@@ -511,12 +489,10 @@ const ImportView = ({ onImport, onDone }) => {
                 </tbody>
               </table>
             </div>
-            {preview.rows.length>15 && <p style={{ textAlign:"center", fontSize:11, color:"#9ca3af", padding:"8px 0", background:"#f9fafb", borderTop:"1px solid #f3f4f6" }}>…and {preview.rows.length-15} more records</p>}
+            {preview.rows.length>15&&<p style={{ textAlign:"center", fontSize:11, color:"#9ca3af", padding:"8px 0", background:"#f9fafb", borderTop:"1px solid #f3f4f6" }}>…and {preview.rows.length-15} more records</p>}
           </div>
-          <Btn onClick={confirm} disabled={importing}
-            style={{ width:"100%", padding:"12px 0", background:importing?"#a5b4fc":"#4f46e5", color:"#fff",
-              display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            {importing ? <><span className="spin"><SVG d={IC.spin} size={15} color="#fff"/></span>Importing…</> : `Import All ${preview.rows.length} Records`}
+          <Btn onClick={confirm} disabled={importing} style={{ width:"100%", padding:"12px 0", background:importing?"#a5b4fc":"#4f46e5", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            {importing?<><span className="spin"><SVG d={IC.spin} size={15} color="#fff"/></span>Importing…</>:`Import All ${preview.rows.length} Records`}
           </Btn>
         </Card>
       </div>
@@ -533,17 +509,31 @@ const ImportView = ({ onImport, onDone }) => {
           Choose File (.xlsx / .xls / .csv)
           <input type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} style={{ display:"none" }}/>
         </label>
-        {error && <p style={{ fontSize:13, color:"#dc2626", marginTop:16 }}>{error}</p>}
+        {error&&<p style={{ fontSize:13, color:"#dc2626", marginTop:16 }}>{error}</p>}
       </Card>
     </div>
   );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CLASSIFICATION FIELDS — shared between Submit and Edit
+// ─────────────────────────────────────────────────────────────────────────────
+const ClassificationFields = ({ f, set, lists, prefix="" }) => (
+  <div>
+    <SectionLabel>Classifications</SectionLabel>
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+      <ClassField label="Product *" value={f.product} onChange={v=>set("product",v)} listId={`${prefix}pl`} options={lists.products}/>
+      <ClassField label="Product Area" value={f.productArea} onChange={v=>set("productArea",v)} listId={`${prefix}al`} options={lists.productAreas}/>
+    </div>
+    <ClassField label="Engagement Format" value={f.engagementFormat} onChange={v=>set("engagementFormat",v)} listId={`${prefix}ef`} options={lists.engagementFormats}/>
+  </div>
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SUBMIT FORM
 // ─────────────────────────────────────────────────────────────────────────────
 const SubmitForm = ({ onSubmit, onDone, lists }) => {
-  const blank = { title:"",description:"",submittedBy:"",isClient:false,client:"",product:"",productSubset:"",productArea:"",ebcType:"",priority:"Medium",tags:[] };
+  const blank = { title:"",description:"",submittedBy:"",isClient:false,client:"",product:"",productArea:"",engagementFormat:"",priority:"Medium",tags:[] };
   const [f,setF] = useState(blank);
   const [tag,setTag] = useState("");
   const [done,setDone] = useState(false);
@@ -551,7 +541,6 @@ const SubmitForm = ({ onSubmit, onDone, lists }) => {
   const addTag = () => { const t=tag.trim(); if(t&&!f.tags.includes(t)) set("tags",[...f.tags,t]); setTag(""); };
   const valid = f.title&&f.submittedBy&&f.product&&f.description&&(!f.isClient||f.client);
   const submit = () => { if(!valid) return; onSubmit(f); setF(blank); setTag(""); setDone(true); setTimeout(()=>{setDone(false);onDone();},1400); };
-  const DL = ({id,items}) => <datalist id={id}>{items.map(v=><option key={v} value={v}/>)}</datalist>;
 
   if (done) return (
     <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:80, gap:16 }}>
@@ -567,7 +556,7 @@ const SubmitForm = ({ onSubmit, onDone, lists }) => {
         <div>
           <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Submitted By *</label>
           <input list="tm" value={f.submittedBy} onChange={e=>set("submittedBy",e.target.value)} placeholder="Name or select" style={InputStyle}/>
-          <DL id="tm" items={lists.teamMembers}/>
+          <datalist id="tm">{lists.teamMembers.map(v=><option key={v} value={v}/>)}</datalist>
         </div>
         <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", userSelect:"none" }}>
           <div onClick={()=>set("isClient",!f.isClient)} style={{ width:40, height:24, borderRadius:999, padding:"0 4px", background:f.isClient?"#4f46e5":"#d1d5db", display:"flex", alignItems:"center", transition:"background 0.2s" }}>
@@ -575,19 +564,9 @@ const SubmitForm = ({ onSubmit, onDone, lists }) => {
           </div>
           <span style={{ fontSize:13, fontWeight:500, color:"#374151" }}>On behalf of a client</span>
         </label>
-        {f.isClient && <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Client Name *</label><input value={f.client} onChange={e=>set("client",e.target.value)} placeholder="e.g. Acme Corp" style={InputStyle}/></div>}
+        {f.isClient&&<div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Client Name *</label><input value={f.client} onChange={e=>set("client",e.target.value)} placeholder="e.g. Acme Corp" style={InputStyle}/></div>}
         <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Request Title *</label><input value={f.title} onChange={e=>set("title",e.target.value)} placeholder="Brief, descriptive title" style={InputStyle}/></div>
-        <div>
-          <SectionLabel>Classifications</SectionLabel>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-            <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Product *</label><input list="pl" value={f.product} onChange={e=>set("product",e.target.value)} placeholder="Select or type" style={InputStyle}/><DL id="pl" items={lists.products}/></div>
-            <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Product Subset</label><input list="sl" value={f.productSubset} onChange={e=>set("productSubset",e.target.value)} placeholder="Select or type" style={InputStyle}/><DL id="sl" items={lists.productSubsets}/></div>
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-            <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Product Area</label><input list="al" value={f.productArea} onChange={e=>set("productArea",e.target.value)} placeholder="Select or type" style={InputStyle}/><DL id="al" items={lists.productAreas}/></div>
-            <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>EBC / Events / Reference</label><input list="el" value={f.ebcType} onChange={e=>set("ebcType",e.target.value)} placeholder="Select or type" style={InputStyle}/><DL id="el" items={lists.ebcTypes}/></div>
-          </div>
-        </div>
+        <ClassificationFields f={f} set={set} lists={lists} prefix="s-"/>
         <div>
           <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Priority</label>
           <div style={{ display:"flex", gap:8 }}>
@@ -603,7 +582,7 @@ const SubmitForm = ({ onSubmit, onDone, lists }) => {
             <input value={tag} onChange={e=>setTag(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTag();}}} placeholder="Type a tag and press Enter" style={{...InputStyle,flex:1}}/>
             <Btn onClick={addTag} style={{ background:"#f3f4f6", color:"#374151", border:"1px solid #e5e7eb" }}>Add</Btn>
           </div>
-          {f.tags.length>0 && <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:8 }}>{f.tags.map(t=>(
+          {f.tags.length>0&&<div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:8 }}>{f.tags.map(t=>(
             <span key={t} style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 10px", background:"#eef2ff", color:"#4f46e5", borderRadius:999, fontSize:12, fontWeight:500 }}>
               {t}<button onClick={()=>set("tags",f.tags.filter(x=>x!==t))} style={{ background:"none", border:"none", cursor:"pointer", color:"#4f46e5", lineHeight:1, padding:0 }}><SVG d={IC.x} size={11}/></button>
             </span>
@@ -624,7 +603,6 @@ const EditModal = ({ request, lists, onSave, onClose }) => {
   const set = (k,v) => setF(p=>({...p,[k]:v}));
   const addTag = () => { const t=tag.trim(); if(t&&!f.tags.includes(t)) set("tags",[...f.tags,t]); setTag(""); };
   const valid = f.title&&f.submittedBy&&f.product&&f.description&&(!f.isClient||f.client);
-  const DL = ({id,items}) => <datalist id={id}>{items.map(v=><option key={v} value={v}/>)}</datalist>;
 
   return (
     <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
@@ -634,26 +612,20 @@ const EditModal = ({ request, lists, onSave, onClose }) => {
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af" }}><SVG d={IC.x} size={18}/></button>
         </div>
         <div style={{ padding:24, display:"flex", flexDirection:"column", gap:16 }}>
-          <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Submitted By *</label><input list="e-tm" value={f.submittedBy} onChange={e=>set("submittedBy",e.target.value)} style={InputStyle}/><DL id="e-tm" items={lists.teamMembers}/></div>
+          <div>
+            <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Submitted By *</label>
+            <input list="e-tm" value={f.submittedBy} onChange={e=>set("submittedBy",e.target.value)} style={InputStyle}/>
+            <datalist id="e-tm">{lists.teamMembers.map(v=><option key={v} value={v}/>)}</datalist>
+          </div>
           <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", userSelect:"none" }}>
             <div onClick={()=>set("isClient",!f.isClient)} style={{ width:40, height:24, borderRadius:999, padding:"0 4px", background:f.isClient?"#4f46e5":"#d1d5db", display:"flex", alignItems:"center", transition:"background 0.2s" }}>
               <div style={{ width:16, height:16, borderRadius:"50%", background:"#fff", boxShadow:"0 1px 3px rgba(0,0,0,0.2)", transform:f.isClient?"translateX(16px)":"none", transition:"transform 0.2s" }}/>
             </div>
             <span style={{ fontSize:13, fontWeight:500, color:"#374151" }}>On behalf of a client</span>
           </label>
-          {f.isClient && <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Client Name *</label><input value={f.client} onChange={e=>set("client",e.target.value)} placeholder="e.g. Acme Corp" style={InputStyle}/></div>}
+          {f.isClient&&<div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Client Name *</label><input value={f.client} onChange={e=>set("client",e.target.value)} placeholder="e.g. Acme Corp" style={InputStyle}/></div>}
           <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Request Title *</label><input value={f.title} onChange={e=>set("title",e.target.value)} style={InputStyle}/></div>
-          <div>
-            <SectionLabel>Classifications</SectionLabel>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-              <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Product *</label><input list="e-pl" value={f.product} onChange={e=>set("product",e.target.value)} style={InputStyle}/><DL id="e-pl" items={lists.products}/></div>
-              <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Product Subset</label><input list="e-sl" value={f.productSubset} onChange={e=>set("productSubset",e.target.value)} style={InputStyle}/><DL id="e-sl" items={lists.productSubsets}/></div>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-              <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Product Area</label><input list="e-al" value={f.productArea} onChange={e=>set("productArea",e.target.value)} style={InputStyle}/><DL id="e-al" items={lists.productAreas}/></div>
-              <div><label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>EBC / Events / Reference</label><input list="e-el" value={f.ebcType} onChange={e=>set("ebcType",e.target.value)} style={InputStyle}/><DL id="e-el" items={lists.ebcTypes}/></div>
-            </div>
-          </div>
+          <ClassificationFields f={f} set={set} lists={lists} prefix="e-"/>
           <div>
             <label style={{ fontSize:13, fontWeight:500, color:"#374151", display:"block", marginBottom:6 }}>Priority</label>
             <div style={{ display:"flex", gap:8 }}>
@@ -669,7 +641,7 @@ const EditModal = ({ request, lists, onSave, onClose }) => {
               <input value={tag} onChange={e=>setTag(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTag();}}} placeholder="Type a tag and press Enter" style={{...InputStyle,flex:1}}/>
               <Btn onClick={addTag} style={{ background:"#f3f4f6", color:"#374151", border:"1px solid #e5e7eb" }}>Add</Btn>
             </div>
-            {f.tags?.length>0 && <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:8 }}>{f.tags.map((t,i)=>(
+            {f.tags?.length>0&&<div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:8 }}>{f.tags.map((t,i)=>(
               <span key={i} style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 10px", background:"#eef2ff", color:"#4f46e5", borderRadius:999, fontSize:12, fontWeight:500 }}>
                 {t}<button onClick={()=>set("tags",f.tags.filter((_,j)=>j!==i))} style={{ background:"none", border:"none", cursor:"pointer", color:"#4f46e5", lineHeight:1, padding:0 }}><SVG d={IC.x} size={11}/></button>
               </span>
@@ -689,42 +661,42 @@ const EditModal = ({ request, lists, onSave, onClose }) => {
 // BOARD
 // ─────────────────────────────────────────────────────────────────────────────
 const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onBack }) => {
-  const [fl,setFl] = useState({ status:"",product:"",productSubset:"",area:"",ebcType:"",client:"",q:"", ...initialFilters });
+  const [fl,setFl] = useState({ status:"",product:"",area:"",engagementFormat:"",client:"",q:"", ...initialFilters });
   const [exp,setExp] = useState(null);
   const [editing,setEditing] = useState(null);
   const sf = (k,v) => setFl(p=>({...p,[k]:v}));
+
   const filtered = useMemo(()=>reqs.filter(r=>{
     if(fl.status&&r.status!==fl.status) return false;
     if(fl.product&&r.product!==fl.product) return false;
-    if(fl.productSubset&&r.productSubset!==fl.productSubset) return false;
     if(fl.area&&r.productArea!==fl.area) return false;
-    if(fl.ebcType&&r.ebcType!==fl.ebcType) return false;
+    if(fl.engagementFormat&&r.engagementFormat!==fl.engagementFormat) return false;
     if(fl.client&&!r.client?.toLowerCase().includes(fl.client.toLowerCase())) return false;
     if(fl.q){const q=fl.q.toLowerCase();return r.title.toLowerCase().includes(q)||r.description?.toLowerCase().includes(q)||r.tags?.some(t=>t.toLowerCase().includes(q));}
     return true;
   }),[reqs,fl]);
+
   const hasFilter = Object.values(fl).some(Boolean);
   const selSt = { border:"1px solid #d1d5db", borderRadius:8, padding:"7px 10px", fontSize:12, background:"#fff", cursor:"pointer" };
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-      {onBack && <button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", cursor:"pointer", fontSize:13, fontWeight:500, color:"#4f46e5", alignSelf:"flex-start" }}><SVG d={IC.back} size={15} color="#4f46e5"/> Back to Dashboard</button>}
+      {onBack&&<button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", cursor:"pointer", fontSize:13, fontWeight:500, color:"#4f46e5", alignSelf:"flex-start" }}><SVG d={IC.back} size={15} color="#4f46e5"/> Back to Dashboard</button>}
       <Card style={{ display:"flex", flexDirection:"column", gap:10 }}>
         <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" }}>
           <input value={fl.q} onChange={e=>sf("q",e.target.value)} placeholder="Search title, description, tags…" style={{...selSt,flex:1,minWidth:180}}/>
           <select value={fl.status} onChange={e=>sf("status",e.target.value)} style={selSt}><option value="">Status: All</option>{Object.keys(STATUS).map(s=><option key={s}>{s}</option>)}</select>
           <select value={fl.product} onChange={e=>sf("product",e.target.value)} style={selSt}><option value="">Product: All</option>{lists.products.map(p=><option key={p}>{p}</option>)}</select>
-          <select value={fl.productSubset} onChange={e=>sf("productSubset",e.target.value)} style={selSt}><option value="">Subset: All</option>{lists.productSubsets.map(p=><option key={p}>{p}</option>)}</select>
           <select value={fl.area} onChange={e=>sf("area",e.target.value)} style={selSt}><option value="">Area: All</option>{lists.productAreas.map(a=><option key={a}>{a}</option>)}</select>
-          <select value={fl.ebcType} onChange={e=>sf("ebcType",e.target.value)} style={selSt}><option value="">EBC/Events: All</option>{lists.ebcTypes.map(e=><option key={e}>{e}</option>)}</select>
+          <select value={fl.engagementFormat} onChange={e=>sf("engagementFormat",e.target.value)} style={selSt}><option value="">Format: All</option>{lists.engagementFormats.map(e=><option key={e}>{e}</option>)}</select>
           <input value={fl.client} onChange={e=>sf("client",e.target.value)} placeholder="Client…" style={{...selSt,width:110}}/>
-          {hasFilter && <button onClick={()=>setFl({status:"",product:"",productSubset:"",area:"",ebcType:"",client:"",q:""})} style={{ background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#9ca3af", display:"flex", alignItems:"center", gap:4 }}><SVG d={IC.x} size={12}/> Clear</button>}
+          {hasFilter&&<button onClick={()=>setFl({status:"",product:"",area:"",engagementFormat:"",client:"",q:""})} style={{ background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#9ca3af", display:"flex", alignItems:"center", gap:4 }}><SVG d={IC.x} size={12}/> Clear</button>}
         </div>
         <p style={{ fontSize:11, color:"#9ca3af" }}>{filtered.length} of {reqs.length} requests</p>
       </Card>
       {filtered.length===0
-        ? <div style={{ textAlign:"center", padding:60, color:"#9ca3af" }}>No requests match your filters</div>
-        : filtered.map(r=>(
+        ?<div style={{ textAlign:"center", padding:60, color:"#9ca3af" }}>No requests match your filters</div>
+        :filtered.map(r=>(
           <div key={r.id} style={{ background:"#fff", borderRadius:12, border:"1px solid #e5e7eb", overflow:"hidden" }}>
             <div onClick={()=>setExp(exp===r.id?null:r.id)} style={{ padding:16, cursor:"pointer", display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
               <div style={{ minWidth:0, flex:1 }}>
@@ -732,9 +704,8 @@ const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onB
                   <StatusPill status={r.status}/>
                   <PriBadge p={r.priority}/>
                   {r.product&&<span style={{ fontSize:11, background:"#eef2ff", color:"#4f46e5", padding:"2px 8px", borderRadius:999, fontWeight:500 }}>{r.product}</span>}
-                  {r.productSubset&&<span style={{ fontSize:11, background:"#e0f2fe", color:"#0369a1", padding:"2px 8px", borderRadius:999, fontWeight:500 }}>{r.productSubset}</span>}
                   {r.productArea&&<span style={{ fontSize:11, background:"#ede9fe", color:"#6d28d9", padding:"2px 8px", borderRadius:999, fontWeight:500 }}>{r.productArea}</span>}
-                  {r.ebcType&&<span style={{ fontSize:11, background:"#fdf4ff", color:"#a21caf", padding:"2px 8px", borderRadius:999, fontWeight:500 }}>{r.ebcType}</span>}
+                  {r.engagementFormat&&<span style={{ fontSize:11, background:"#fdf4ff", color:"#a21caf", padding:"2px 8px", borderRadius:999, fontWeight:500 }}>{r.engagementFormat}</span>}
                   {r.client&&<span style={{ fontSize:11, background:"#f5f3ff", color:"#7c3aed", padding:"2px 8px", borderRadius:999 }}>{r.client}</span>}
                 </div>
                 <p style={{ fontSize:14, fontWeight:500, color:"#111827" }}>{r.title}</p>
@@ -744,7 +715,7 @@ const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onB
                 <SVG d={exp===r.id?IC.chevU:IC.chevD} size={14} color="#9ca3af"/>
               </div>
             </div>
-            {exp===r.id && (
+            {exp===r.id&&(
               <div style={{ padding:"0 16px 16px", borderTop:"1px solid #f3f4f6", paddingTop:12, display:"flex", flexDirection:"column", gap:10 }}>
                 {r.description&&<p style={{ fontSize:13, color:"#374151" }}>{r.description}</p>}
                 {r.tags?.length>0&&<div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>{r.tags.map((t,i)=><Tag key={i}>{t}</Tag>)}</div>}
@@ -764,7 +735,7 @@ const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onB
           </div>
         ))
       }
-      {editing && <EditModal request={editing} lists={lists} onSave={updated=>{onEdit(updated);setEditing(null);setExp(null);}} onClose={()=>setEditing(null)}/>}
+      {editing&&<EditModal request={editing} lists={lists} onSave={updated=>{onEdit(updated);setEditing(null);setExp(null);}} onClose={()=>setEditing(null)}/>}
     </div>
   );
 };
@@ -773,17 +744,17 @@ const Board = ({ reqs, onStatus, onRemove, onEdit, lists, initialFilters={}, onB
 // AI INSIGHTS
 // ─────────────────────────────────────────────────────────────────────────────
 const AIQuery = ({ reqs }) => {
-  const [q,setQ] = useState(""); const [loading,setLoading] = useState(false);
-  const [res,setRes] = useState(null); const [asked,setAsked] = useState(""); const [err,setErr] = useState(null);
-  const suggestions = ["What are the most common feature requests?","Which clients have the most pending requests?","Are there similar or duplicate requests?","What product areas need the most attention?","Break down requests by EBC vs Events vs Reference","List all high priority backlog items"];
+  const [q,setQ]=useState(""); const [loading,setLoading]=useState(false);
+  const [res,setRes]=useState(null); const [asked,setAsked]=useState(""); const [err,setErr]=useState(null);
+  const suggestions=["What are the most common feature requests?","Which clients have the most pending requests?","Are there similar or duplicate requests?","What product areas need the most attention?","Break down requests by Engagement Format","List all high priority backlog items"];
   const ask = async qry => {
     if(!qry.trim()||loading) return;
     if(!ANTH_KEY){setErr("Add your Anthropic API key to ANTH_KEY in the file to enable AI Insights.");return;}
     setLoading(true);setRes(null);setErr(null);setAsked(qry);
-    const ctx = JSON.stringify(reqs.map(r=>({title:r.title,description:r.description,product:r.product,productSubset:r.productSubset,productArea:r.productArea,ebcType:r.ebcType,client:r.client||"Internal",tags:r.tags,priority:r.priority,status:r.status,submittedBy:r.submittedBy,date:r.createdAt?.split("T")[0]})));
+    const ctx=JSON.stringify(reqs.map(r=>({title:r.title,description:r.description,product:r.product,productArea:r.productArea,engagementFormat:r.engagementFormat,client:r.client||"Internal",tags:r.tags,priority:r.priority,status:r.status,submittedBy:r.submittedBy,date:r.createdAt?.split("T")[0]})));
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTH_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:"You are a product analytics assistant. Analyze the feature request database and answer insightfully using markdown. Be specific with counts, examples, and patterns.",messages:[{role:"user",content:`Feature requests:\n${ctx}\n\nQuestion: ${qry}`}]})});
-      const data = await resp.json();
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTH_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:"You are a product analytics assistant. Analyze the feature request database and answer insightfully using markdown. Be specific with counts, examples, and patterns.",messages:[{role:"user",content:`Feature requests:\n${ctx}\n\nQuestion: ${qry}`}]})});
+      const data=await resp.json();
       setRes(data.content?.find(b=>b.type==="text")?.text||"No response.");
     } catch(e){setErr("Request failed: "+e.message);}
     setLoading(false);
@@ -798,7 +769,7 @@ const AIQuery = ({ reqs }) => {
         <p style={{ fontSize:13, color:"#6b7280", marginBottom:14 }}>Ask anything about your {reqs.length} requests — trends, patterns, duplicates, or breakdowns.</p>
         <div style={{ display:"flex", gap:8, marginBottom:12 }}>
           <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")ask(q);}} placeholder="e.g. What are the top trends in the backlog?" style={{...InputStyle,flex:1}}/>
-          <Btn onClick={()=>ask(q)} disabled={!q.trim()||loading} style={{ background:q.trim()&&!loading?"#7c3aed":"#f3f4f6", color:q.trim()&&!loading?"#fff":"#9ca3af", cursor:q.trim()&&!loading?"pointer":"not-allowed", display:"flex", alignItems:"center", gap:6 }}>
+          <Btn onClick={()=>ask(q)} disabled={!q.trim()||loading} style={{ background:q.trim()&&!loading?"#7c3aed":"#f3f4f6", color:q.trim()&&!loading?"#fff":"#9ca3af", display:"flex", alignItems:"center", gap:6 }}>
             {loading?<span className="spin"><SVG d={IC.spin} size={14} color="#9ca3af"/></span>:"Ask"}
           </Btn>
         </div>
@@ -816,7 +787,7 @@ const AIQuery = ({ reqs }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const App = () => {
   const [view,setView]               = useState("dashboard");
-  const [reqs,setReqs]               = useState([]);   // UI only — Gist is source of truth
+  const [reqs,setReqs]               = useState([]);  // UI only — Gist is source of truth
   const [ready,setReady]             = useState(false);
   const [syncing,setSyncing]         = useState(false);
   const [boardFilters,setBoardFilters] = useState({});
@@ -824,58 +795,46 @@ const App = () => {
 
   const navigateBoard = filters => { setBoardFilters(filters); setView("board"); };
 
-  // On load — always fetch from Gist
   useEffect(() => {
     if (needsSetup) return;
     (async () => {
       setSyncing(true);
-      try {
-        const data = await loadData();
-        setReqs(data);
-      } catch(e) {
-        clearToken();
-        setNeedsSetup(true);
-      }
-      setSyncing(false);
-      setReady(true);
+      try { const data=await loadData(); setReqs(data); }
+      catch(e) { clearToken(); setNeedsSetup(true); }
+      setSyncing(false); setReady(true);
     })();
   }, [needsSetup]);
 
-  // All mutations write to Gist first, update UI only on success
   const persist = useCallback(async updated => {
     setSyncing(true);
-    try {
-      await saveData(updated);
-      setReqs(updated);
-    } catch(e) {
-      alert("⚠️ Failed to save to Gist.\n\nError: " + e.message + "\n\nYour token may have expired. You will be returned to the setup screen.");
-      clearToken();
-      setNeedsSetup(true);
+    try { await saveData(updated); setReqs(updated); }
+    catch(e) {
+      alert("⚠️ Failed to save to Gist.\n\nError: "+e.message+"\n\nYour token may have expired.");
+      clearToken(); setNeedsSetup(true);
     }
     setSyncing(false);
   }, []);
 
-  const addReq    = form    => persist([{ ...form, id:uid(), status:"Backlog", createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() }, ...reqs]);
-  const updStatus = (id,s)  => persist(reqs.map(r => r.id===id ? { ...r, status:s, updatedAt:new Date().toISOString() } : r));
-  const updateReq = updated => persist(reqs.map(r => r.id===updated.id ? { ...updated, updatedAt:new Date().toISOString() } : r));
-  const removeReq = id      => persist(reqs.filter(r => r.id!==id));
-  const importReqs= rows    => persist([...rows, ...reqs]);
+  const addReq    = form    => persist([{...form, id:uid(), status:"Backlog", createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()}, ...reqs]);
+  const updStatus = (id,s)  => persist(reqs.map(r=>r.id===id?{...r,status:s,updatedAt:new Date().toISOString()}:r));
+  const updateReq = updated => persist(reqs.map(r=>r.id===updated.id?{...updated,updatedAt:new Date().toISOString()}:r));
+  const removeReq = id      => persist(reqs.filter(r=>r.id!==id));
+  const importReqs= rows    => persist([...rows,...reqs]);
 
   const uniq = key => [...new Set(reqs.map(r=>r[key]).filter(Boolean))].sort();
   const lists = useMemo(()=>({
-    products:       uniq("product"),
-    productSubsets: uniq("productSubset"),
-    productAreas:   uniq("productArea"),
-    ebcTypes:       uniq("ebcType"),
-    teamMembers:    [...new Set(["Alex","Jordan","Sam","Taylor","Morgan",...reqs.map(r=>r.submittedBy).filter(Boolean)])].sort(),
+    products:          uniq("product"),
+    productAreas:      uniq("productArea"),
+    engagementFormats: uniq("engagementFormat"),
+    teamMembers:       [...new Set(["Alex","Jordan","Sam","Taylor","Morgan",...reqs.map(r=>r.submittedBy).filter(Boolean)])].sort(),
   }),[reqs]);
 
   const NAV = [
-    {id:"dashboard",label:"Dashboard", icon:IC.bar},
-    {id:"submit",   label:"Submit",    icon:IC.plus},
-    {id:"board",    label:"Requests",  icon:IC.list},
-    {id:"query",    label:"AI Insights",icon:IC.spark},
-    {id:"import",   label:"Import",    icon:IC.upload},
+    {id:"dashboard", label:"Dashboard",  icon:IC.bar},
+    {id:"submit",    label:"Submit",     icon:IC.plus},
+    {id:"board",     label:"Requests",   icon:IC.list},
+    {id:"query",     label:"AI Insights",icon:IC.spark},
+    {id:"import",    label:"Import",     icon:IC.upload},
   ];
 
   if (needsSetup) return <SetupScreen onDone={data=>{setReqs(data);setNeedsSetup(false);setReady(true);}}/>;
@@ -889,7 +848,7 @@ const App = () => {
             <div style={{ width:28, height:28, background:"#4f46e5", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}><SVG d={IC.zap} size={16} color="#fff"/></div>
             <span style={{ fontSize:17, fontWeight:700, color:"#111827" }}>FeatureTrack</span>
             <span style={{ fontSize:11, color:"#9ca3af", background:"#f3f4f6", padding:"2px 8px", borderRadius:999, marginLeft:4 }}>{reqs.length} request{reqs.length!==1?"s":""}</span>
-            {syncing && <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:"#6366f1" }}><span className="spin"><SVG d={IC.spin} size={11} color="#6366f1"/></span>Saving…</span>}
+            {syncing&&<span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:"#6366f1" }}><span className="spin"><SVG d={IC.spin} size={11} color="#6366f1"/></span>Saving…</span>}
           </div>
           <nav style={{ display:"flex", gap:4, alignItems:"center" }}>
             {NAV.map(({id,label,icon})=>(
@@ -897,7 +856,7 @@ const App = () => {
                 <SVG d={icon} size={14} color={view===id?"#fff":"#6b7280"}/>{label}
               </button>
             ))}
-            <button onClick={()=>{ clearToken(); setNeedsSetup(true); }}
+            <button onClick={()=>{clearToken();setNeedsSetup(true);}}
               style={{ marginLeft:8, padding:"7px 12px", borderRadius:8, fontSize:12, fontWeight:500, border:"1px solid #e5e7eb", background:"#f9fafb", color:"#9ca3af", cursor:"pointer" }}>
               Change Token
             </button>
@@ -905,11 +864,11 @@ const App = () => {
         </div>
       </header>
       <main style={{ maxWidth:1200, margin:"0 auto", padding:"28px 24px" }}>
-        {view==="dashboard" && <Dashboard reqs={reqs} onImport={()=>setView("import")} onNavigate={navigateBoard} onStatus={updStatus}/>}
-        {view==="submit"    && <SubmitForm onSubmit={addReq} onDone={()=>setView("board")} lists={lists}/>}
-        {view==="board"     && <Board key={JSON.stringify(boardFilters)} reqs={reqs} onStatus={updStatus} onRemove={removeReq} onEdit={updateReq} lists={lists} initialFilters={boardFilters} onBack={Object.keys(boardFilters).length?()=>setView("dashboard"):null}/>}
-        {view==="query"     && <AIQuery reqs={reqs}/>}
-        {view==="import"    && <ImportView onImport={importReqs} onDone={()=>setView("dashboard")}/>}
+        {view==="dashboard"&&<Dashboard reqs={reqs} onImport={()=>setView("import")} onNavigate={navigateBoard} onStatus={updStatus}/>}
+        {view==="submit"   &&<SubmitForm onSubmit={addReq} onDone={()=>setView("board")} lists={lists}/>}
+        {view==="board"    &&<Board key={JSON.stringify(boardFilters)} reqs={reqs} onStatus={updStatus} onRemove={removeReq} onEdit={updateReq} lists={lists} initialFilters={boardFilters} onBack={Object.keys(boardFilters).length?()=>setView("dashboard"):null}/>}
+        {view==="query"    &&<AIQuery reqs={reqs}/>}
+        {view==="import"   &&<ImportView onImport={importReqs} onDone={()=>setView("dashboard")}/>}
       </main>
     </div>
   );
